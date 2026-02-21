@@ -1,0 +1,9 @@
+.venv-mcp/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+data/
+.env
+*.sample
+.DS_Store

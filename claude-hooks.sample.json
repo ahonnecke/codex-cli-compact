@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/krishnakant/Documents/Open source/beads-main/dual-graph-dashboard/dg.py scan && python3 /Users/krishnakant/Documents/Open source/beads-main/dual-graph-dashboard/dg.py prime"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/krishnakant/Documents/Open source/beads-main/dual-graph-dashboard/dg.py prime"
+          }
+        ]
+      }
+    ]
+  }
+}

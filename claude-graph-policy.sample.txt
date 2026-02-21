@@ -1,0 +1,5 @@
+Use graph_retrieve first for context discovery.
+Use graph_read for all file reads.
+Use graph_neighbors and graph_impact for dependency/impact analysis.
+Use fallback_rg only when graph_retrieve is empty or clearly low-confidence.
+Keep changes scoped; avoid broad repository scans by default.

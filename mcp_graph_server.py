@@ -17,6 +17,13 @@ try:
 except Exception:  # noqa: BLE001
     FastMCP = None  # type: ignore[assignment]
 
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    from graph_builder import scan as _gb_scan
+except Exception:  # noqa: BLE001
+    _gb_scan = None  # type: ignore[assignment]
+
 
 DG_BASE = os.environ.get("DG_BASE_URL", "http://127.0.0.1:8787")
 DG_API_TOKEN = os.environ.get("DG_API_TOKEN", "").strip()
@@ -776,6 +783,49 @@ def build_server(host: str = "0.0.0.0", port: int = 8080) -> Any:
                 break
         TURN_STATE["fallback_calls"] = calls + 1
         return {"ok": True, "pattern": pattern, "hits": hits}
+
+    @mcp.tool()
+    def graph_scan(project_root: str) -> dict[str, Any]:
+        """Scan a local project directory and build/refresh its information graph.
+
+        Call this once at the start of a session to point the dual-graph at your
+        project folder. After scanning, graph_retrieve / graph_read / graph_continue
+        will work against that project.
+
+        Args:
+            project_root: Absolute path to the project directory to scan.
+        """
+        global PROJECT_ROOT  # noqa: PLW0603
+
+        if _gb_scan is None:
+            return {"ok": False, "error": "graph_builder not available"}
+
+        root = Path(project_root).expanduser().resolve()
+        if not root.is_dir():
+            return {"ok": False, "error": f"Not a directory: {root}"}
+
+        graph = _gb_scan(root)
+
+        # Write to the same JSON the dashboard serves.
+        graph_json = Path(__file__).resolve().parent / "data" / "info_graph.json"
+        graph_json.parent.mkdir(parents=True, exist_ok=True)
+        graph_json.write_text(json.dumps(graph, indent=2), encoding="utf-8")
+
+        # Update module-level root so graph_read / fallback_rg use the new path.
+        PROJECT_ROOT = root
+
+        # Invalidate retrieval cache so stale results don't bleed in.
+        if RETRIEVAL_CACHE_FILE.exists():
+            RETRIEVAL_CACHE_FILE.unlink(missing_ok=True)
+
+        _log_tool("graph_scan", {"project_root": str(root), "nodes": graph["node_count"], "edges": graph["edge_count"]})
+        return {
+            "ok": True,
+            "project_root": str(root),
+            "node_count": graph["node_count"],
+            "edge_count": graph["edge_count"],
+            "message": "Graph built. Use graph_continue or graph_retrieve to query it.",
+        }
 
     return mcp
 

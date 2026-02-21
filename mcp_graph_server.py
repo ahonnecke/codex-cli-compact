@@ -23,7 +23,7 @@ DG_API_TOKEN = os.environ.get("DG_API_TOKEN", "").strip()
 PROJECT_ROOT = Path(
     os.environ.get(
         "DUAL_GRAPH_PROJECT_ROOT",
-        "/Users/krishnakant/documents/personal projects/restaurant CRM/restaurant-crm",
+        "/app/project",  # default clone target in Railway (set via GITHUB_REPO_URL)
     )
 ).resolve()
 LOG_FILE = Path(__file__).resolve().parent / "data" / "mcp_tool_calls.jsonl"

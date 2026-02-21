@@ -566,8 +566,23 @@ def build_server(host: str = "0.0.0.0", port: int = 8080) -> Any:
         if PROJECT_ROOT not in tgt.parents and tgt != PROJECT_ROOT:
             return {"ok": False, "error": "outside project root"}
         if not tgt.exists() or not tgt.is_file():
-            return {"ok": False, "error": "file not found", "file": file}
-        text = tgt.read_text(encoding="utf-8", errors="ignore")
+            # Remote/Railway mode: file is not on this server's disk.
+            # Fall back to content uploaded with the graph.
+            graph_json = Path(__file__).resolve().parent / "data" / "info_graph.json"
+            text = None
+            if graph_json.exists():
+                try:
+                    gdata = json.loads(graph_json.read_text(encoding="utf-8"))
+                    for node in gdata.get("nodes", []):
+                        if node.get("path") == file and node.get("content"):
+                            text = node["content"]
+                            break
+                except Exception:
+                    pass
+            if not text:
+                return {"ok": False, "error": "file not found", "file": file}
+        else:
+            text = tgt.read_text(encoding="utf-8", errors="ignore")
         mode = "full"
         if anchor:
             i = text.lower().find(anchor.lower())

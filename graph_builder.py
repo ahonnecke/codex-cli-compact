@@ -28,6 +28,9 @@ SKIP_DIRS = {
 }
 
 MAX_FILE_BYTES = 300_000
+# Max chars of file content stored per node so graph_read works in remote
+# (Railway) mode where the server cannot access the local filesystem.
+MAX_CONTENT_CHARS = 24_000
 
 
 @dataclass
@@ -38,6 +41,7 @@ class Node:
     ext: str
     size: int
     keywords: list[str]
+    content: str = ""
 
     def as_dict(self) -> dict:
         return {
@@ -47,6 +51,7 @@ class Node:
             "ext": self.ext,
             "size": self.size,
             "keywords": self.keywords,
+            "content": self.content,
         }
 
 
@@ -242,6 +247,7 @@ def scan(root: Path) -> dict:
             ext=path.suffix.lower(),
             size=size,
             keywords=extract_keywords(content, path.suffix.lower()),
+            content=content[:MAX_CONTENT_CHARS],
         )
         nodes.append(node)
         edges.extend(parse_relations(path, content, root))

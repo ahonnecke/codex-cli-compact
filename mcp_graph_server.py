@@ -887,13 +887,47 @@ def build_server(host: str = "0.0.0.0", port: int = 8080) -> Any:
 
 
 def main() -> int:
+    import anyio
+    import uvicorn
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse
+    from starlette.routing import Mount, Route
+
     port = int(os.environ.get("PORT", 8080))
-    # Pass host/port at construction so FastMCP skips DNS-rebinding protection
-    # (it only activates when host is 127.0.0.1/localhost — not 0.0.0.0).
     mcp = build_server(host="0.0.0.0", port=port)
-    # Streamable HTTP transport — required by codex mcp add --url.
-    # Endpoint: /mcp  (FastMCP default for streamable-http)
-    mcp.run(transport="streamable-http")
+
+    # Custom /ingest-graph route: accepts pre-built graph JSON from local machine
+    # so users can run: graph_builder.py locally -> POST here -> chat via MCP
+    async def ingest_graph(request: Request) -> JSONResponse:
+        try:
+            graph = await request.json()
+            if "nodes" not in graph or "edges" not in graph:
+                return JSONResponse({"ok": False, "error": "missing nodes/edges"}, status_code=400)
+        except Exception as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        graph_json = Path(__file__).resolve().parent / "data" / "info_graph.json"
+        graph_json.parent.mkdir(parents=True, exist_ok=True)
+        graph_json.write_text(json.dumps(graph, indent=2), encoding="utf-8")
+        # Invalidate retrieval cache so new graph is used immediately.
+        RETRIEVAL_CACHE_FILE.unlink(missing_ok=True)
+        return JSONResponse({
+            "ok": True,
+            "node_count": graph.get("node_count", len(graph["nodes"])),
+            "edge_count": graph.get("edge_count", len(graph["edges"])),
+        })
+
+    mcp_app = mcp.streamable_http_app()
+    app = Starlette(routes=[
+        Route("/ingest-graph", ingest_graph, methods=["POST"]),
+        Mount("/", app=mcp_app),
+    ])
+
+    async def serve() -> None:
+        config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info")
+        await uvicorn.Server(config).serve()
+
+    anyio.run(serve)
     return 0
 
 

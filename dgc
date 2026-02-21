@@ -9,7 +9,7 @@
 # Setup (one time):
 #   curl -sSL https://codex-cli-compact-production.up.railway.app/install.sh | bash
 #   source ~/.zshrc
-#   claude mcp add dual-graph --url https://codex-cli-compact-production.up.railway.app/mcp
+#   claude mcp add --transport http dual-graph https://codex-cli-compact-production.up.railway.app/mcp
 
 set -euo pipefail
 

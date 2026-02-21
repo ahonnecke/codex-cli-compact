@@ -33,7 +33,7 @@ AB_RUNS_DIR = DATA_DIR / "ab_runs"
 PROJECT_ROOT = Path(
     os.environ.get(
         "DUAL_GRAPH_PROJECT_ROOT",
-        "/Users/krishnakant/documents/personal projects/restaurant CRM/restaurant-crm",
+        "/app/project",  # default clone target in Railway (set via GITHUB_REPO_URL)
     )
 ).resolve()
 API_TOKEN = os.environ.get("DG_API_TOKEN", "").strip()

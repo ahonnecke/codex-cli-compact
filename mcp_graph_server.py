@@ -33,9 +33,15 @@ PROJECT_ROOT = Path(
         "/app/project",  # default clone target in Railway (set via GITHUB_REPO_URL)
     )
 ).resolve()
-LOG_FILE = Path(__file__).resolve().parent / "data" / "mcp_tool_calls.jsonl"
-ACTION_GRAPH_FILE = Path(__file__).resolve().parent / "data" / "chat_action_graph.json"
-RETRIEVAL_CACHE_FILE = Path(__file__).resolve().parent / "data" / "retrieval_cache.json"
+# DG_DATA_DIR: where graph JSON + action graph + cache are stored.
+# Defaults to <script_dir>/data (Railway mode).
+# Set to PROJECT_ROOT/.dual-graph for local mode so data persists with the project.
+DG_DATA_DIR = Path(
+    os.environ.get("DG_DATA_DIR", str(Path(__file__).resolve().parent / "data"))
+)
+LOG_FILE = DG_DATA_DIR / "mcp_tool_calls.jsonl"
+ACTION_GRAPH_FILE = DG_DATA_DIR / "chat_action_graph.json"
+RETRIEVAL_CACHE_FILE = DG_DATA_DIR / "retrieval_cache.json"
 HARD_MAX_READ_CHARS = int(os.environ.get("DG_HARD_MAX_READ_CHARS", "4000"))
 TURN_READ_BUDGET_CHARS = int(os.environ.get("DG_TURN_READ_BUDGET_CHARS", "18000"))
 ENFORCE_REUSE_GATE = str(os.environ.get("DG_ENFORCE_REUSE_GATE", "1")).strip() not in {"0", "false", "False"}
@@ -568,7 +574,7 @@ def build_server(host: str = "0.0.0.0", port: int = 8080) -> Any:
         if not tgt.exists() or not tgt.is_file():
             # Remote/Railway mode: file is not on this server's disk.
             # Fall back to content uploaded with the graph.
-            graph_json = Path(__file__).resolve().parent / "data" / "info_graph.json"
+            graph_json = DG_DATA_DIR / "info_graph.json"
             text = None
             if graph_json.exists():
                 try:
@@ -743,7 +749,7 @@ def build_server(host: str = "0.0.0.0", port: int = 8080) -> Any:
         # In the Railway upload model the project directory never exists on the
         # server; the graph arrives via POST /ingest-graph, so the graph file
         # is the only reliable signal that the project has been scanned.
-        graph_json = Path(__file__).resolve().parent / "data" / "info_graph.json"
+        graph_json = DG_DATA_DIR / "info_graph.json"
         graph_missing = not graph_json.exists()
         graph_empty = False
         if not graph_missing:
@@ -870,7 +876,7 @@ def build_server(host: str = "0.0.0.0", port: int = 8080) -> Any:
         graph = _gb_scan(root)
 
         # Write to the same JSON the dashboard serves.
-        graph_json = Path(__file__).resolve().parent / "data" / "info_graph.json"
+        graph_json = DG_DATA_DIR / "info_graph.json"
         graph_json.parent.mkdir(parents=True, exist_ok=True)
         graph_json.write_text(json.dumps(graph, indent=2), encoding="utf-8")
 
@@ -917,6 +923,7 @@ def main() -> int:
     from starlette.routing import Route
 
     port = int(os.environ.get("PORT", 8080))
+    DG_DATA_DIR.mkdir(parents=True, exist_ok=True)
     mcp = build_server(host="0.0.0.0", port=port)
 
     # Custom /ingest-graph route: accepts pre-built graph JSON from local machine
@@ -928,7 +935,7 @@ def main() -> int:
                 return JSONResponse({"ok": False, "error": "missing nodes/edges"}, status_code=400)
         except Exception as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
-        graph_json = Path(__file__).resolve().parent / "data" / "info_graph.json"
+        graph_json = DG_DATA_DIR / "info_graph.json"
         graph_json.parent.mkdir(parents=True, exist_ok=True)
         graph_json.write_text(json.dumps(graph, indent=2), encoding="utf-8")
         # Invalidate retrieval cache so new graph is used immediately.
@@ -952,25 +959,26 @@ def main() -> int:
     async def serve_dgc(request: Request) -> Response:
         return Response((_HERE / "dgc").read_text(encoding="utf-8"), media_type="text/plain")
 
+    async def serve_mcp_server(request: Request) -> Response:
+        return Response((_HERE / "mcp_graph_server.py").read_text(encoding="utf-8"), media_type="text/plain")
+
     async def serve_install(request: Request) -> Response:
         base = str(request.base_url).rstrip("/")
         script = f"""\
 #!/usr/bin/env bash
 set -euo pipefail
-RAILWAY_URL="{base}"
+BASE_URL="{base}"
 INSTALL_DIR="$HOME/.dual-graph"
 mkdir -p "$INSTALL_DIR"
 
-echo "[install] Downloading graph_builder.py..."
-curl -sSL "$RAILWAY_URL/graph_builder.py" -o "$INSTALL_DIR/graph_builder.py"
+echo "[install] Downloading files..."
+curl -sSL "$BASE_URL/graph_builder.py"    -o "$INSTALL_DIR/graph_builder.py"
+curl -sSL "$BASE_URL/mcp_graph_server.py" -o "$INSTALL_DIR/mcp_graph_server.py"
+curl -sSL "$BASE_URL/dg"  -o "$INSTALL_DIR/dg"  && chmod +x "$INSTALL_DIR/dg"
+curl -sSL "$BASE_URL/dgc" -o "$INSTALL_DIR/dgc" && chmod +x "$INSTALL_DIR/dgc"
 
-echo "[install] Downloading dg (Codex CLI)..."
-curl -sSL "$RAILWAY_URL/dg" -o "$INSTALL_DIR/dg"
-chmod +x "$INSTALL_DIR/dg"
-
-echo "[install] Downloading dgc (Claude Code)..."
-curl -sSL "$RAILWAY_URL/dgc" -o "$INSTALL_DIR/dgc"
-chmod +x "$INSTALL_DIR/dgc"
+echo "[install] Installing Python dependencies..."
+pip install "mcp>=1.3.0" uvicorn anyio starlette --quiet
 
 # Add to PATH if not already there
 SHELL_RC="$HOME/.zshrc"
@@ -984,15 +992,15 @@ echo ""
 echo "[install] Done! Run these once:"
 echo "  source $SHELL_RC"
 echo ""
-echo "  # Register for Codex CLI:"
-echo "  codex mcp add dual-graph --url $RAILWAY_URL/mcp"
+echo "  # Register for Codex CLI (uses Railway):"
+echo "  codex mcp add dual-graph --url $BASE_URL/mcp"
 echo ""
-echo "  # Register for Claude Code:"
-echo "  claude mcp add --transport http dual-graph $RAILWAY_URL/mcp"
+echo "  # Register for Claude Code (uses local server):"
+echo "  claude mcp add --transport http dual-graph http://localhost:8080/mcp"
 echo ""
 echo "Then per project:"
-echo "  dg /path/to/project    # Codex CLI"
-echo "  dgc /path/to/project   # Claude Code"
+echo "  dg /path/to/project    # Codex CLI  (Railway MCP)"
+echo "  dgc /path/to/project   # Claude Code (local MCP, fully private)"
 """
         return Response(script, media_type="text/plain")
 
@@ -1009,6 +1017,7 @@ echo "  dgc /path/to/project   # Claude Code"
         Route("/dgc", serve_dgc, methods=["GET"]),
         Route("/dg", serve_dg, methods=["GET"]),
         Route("/graph_builder.py", serve_graph_builder, methods=["GET"]),
+        Route("/mcp_graph_server.py", serve_mcp_server, methods=["GET"]),
     ]
 
     async def serve() -> None:

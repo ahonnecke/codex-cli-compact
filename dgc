@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dgc — Dual-Graph launcher for Claude Code CLI
+# dgc — Dual-Graph launcher for Claude Code (fully local, no cloud)
 #
 # Usage:
 #   dgc                          # scan current directory, start claude
@@ -9,7 +9,8 @@
 # Setup (one time):
 #   curl -sSL https://codex-cli-compact-production.up.railway.app/install.sh | bash
 #   source ~/.zshrc
-#   claude mcp add --transport http dual-graph https://codex-cli-compact-production.up.railway.app/mcp
+#   pip install "mcp>=1.3.0" uvicorn anyio starlette
+#   claude mcp add --transport http dual-graph http://localhost:8080/mcp
 
 set -euo pipefail
 
@@ -17,70 +18,93 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT="${1:-$(pwd)}"
 PROJECT="$(cd "$PROJECT" && pwd)"   # resolve to absolute
 PROMPT="${2:-}"
-RAILWAY_URL="${DG_RAILWAY_URL:-https://codex-cli-compact-production.up.railway.app}"
+MCP_PORT=8080
+DATA_DIR="$PROJECT/.dual-graph"
 
 echo "[dgc] Project : $PROJECT"
-echo "[dgc] Server  : $RAILWAY_URL"
+echo "[dgc] Data    : $DATA_DIR"
 echo ""
+
+mkdir -p "$DATA_DIR"
+
+# Add .dual-graph to .gitignore (idempotent)
+if [[ -f "$PROJECT/.gitignore" ]] && ! grep -qx '.dual-graph/' "$PROJECT/.gitignore" 2>/dev/null; then
+  echo '.dual-graph/' >> "$PROJECT/.gitignore"
+  echo "[dgc] Added .dual-graph/ to .gitignore"
+fi
 
 # ── Inject CLAUDE.md policy into project (idempotent) ────────────────────────
 CLAUDE_MD="$PROJECT/CLAUDE.md"
 if [[ ! -f "$CLAUDE_MD" ]]; then
   echo "[dgc] Creating CLAUDE.md ..."
-  cat > "$CLAUDE_MD" << CLAUDE_EOF
+  cat > "$CLAUDE_MD" << 'CLAUDE_EOF'
 # Dual-Graph Context Policy
 
-This project uses a dual-graph MCP server for efficient context retrieval.
+This project uses a local dual-graph MCP server for efficient context retrieval.
 
 ## MANDATORY: Always follow this order
 
-1. **Call \`graph_continue\` first** — before any file exploration, grep, or code reading.
+1. **Call `graph_continue` first** — before any file exploration, grep, or code reading.
 
-2. **If \`graph_continue\` returns \`needs_project=true\`**, do ALL of the following automatically (do NOT ask the user):
-   - Run \`pwd\` to confirm the project directory.
-   - Run: \`python3 ~/.dual-graph/graph_builder.py --root <project_dir> --out /tmp/dg_graph.json\`
-   - Run: \`curl -sf -X POST $RAILWAY_URL/ingest-graph -H "Content-Type: application/json" --data-binary @/tmp/dg_graph.json\`
-   - Call \`graph_continue\` again with the original query.
+2. **If `graph_continue` returns `needs_project=true`**, call `graph_scan` with the
+   current project directory (run `pwd` to get it). Do NOT ask the user.
 
-3. **If \`graph_continue\` returns \`mode=memory_first\`**: use \`graph_read\` on \`recommended_files\` only.
+3. **If `graph_continue` returns `mode=memory_first`**: use `graph_read` on `recommended_files` only.
 
-4. **If \`graph_continue\` returns \`mode=retrieve_then_read\`**: use \`graph_read\` on \`recommended_files\`.
+4. **If `graph_continue` returns `mode=retrieve_then_read`**: use `graph_read` on `recommended_files`.
 
 ## Rules
 
-- Do NOT use \`rg\`, \`grep\`, or bash file exploration before calling \`graph_continue\`.
+- Do NOT use `rg`, `grep`, or bash file exploration before calling `graph_continue`.
 - Do NOT dump full chat history.
-- Do NOT call \`graph_retrieve\` more than once per turn.
-- After edits, call \`graph_register_edit\` with the changed files.
+- Do NOT call `graph_retrieve` more than once per turn.
+- After edits, call `graph_register_edit` with the changed files.
 CLAUDE_EOF
   echo "[dgc] CLAUDE.md created."
 else
   echo "[dgc] CLAUDE.md already exists, skipping."
 fi
 
-# ── Build graph locally ───────────────────────────────────────────────────────
+# ── Scan project → local .dual-graph/info_graph.json ─────────────────────────
 echo "[dgc] Scanning project..."
-python3 "$SCRIPT_DIR/graph_builder.py" --root "$PROJECT" --out /tmp/dg_graph.json
+python3 "$SCRIPT_DIR/graph_builder.py" --root "$PROJECT" --out "$DATA_DIR/info_graph.json"
 echo "[dgc] Scan complete."
+echo ""
 
-# ── Upload graph to Railway ───────────────────────────────────────────────────
-echo "[dgc] Uploading graph to $RAILWAY_URL ..."
-RESULT=$(curl -sf -X POST "$RAILWAY_URL/ingest-graph" \
-  -H "Content-Type: application/json" \
-  --data-binary @/tmp/dg_graph.json 2>&1) && echo "[dgc] $RESULT" || {
-  echo "[dgc] Upload failed: $RESULT"
-  echo "[dgc] Is the server reachable? Check: $RAILWAY_URL/mcp"
-  exit 1
-}
+# ── Kill any stale MCP server on port $MCP_PORT ───────────────────────────────
+lsof -ti:$MCP_PORT 2>/dev/null | xargs kill -9 2>/dev/null || true
+sleep 0.5
 
+# ── Start local MCP server ────────────────────────────────────────────────────
+echo "[dgc] Starting local MCP server on port $MCP_PORT ..."
+DG_DATA_DIR="$DATA_DIR" \
+DUAL_GRAPH_PROJECT_ROOT="$PROJECT" \
+DG_BASE_URL="http://localhost:$MCP_PORT" \
+PORT=$MCP_PORT \
+  python3 "$SCRIPT_DIR/mcp_graph_server.py" &
+MCP_PID=$!
+
+# Kill server when claude exits
+trap 'echo ""; echo "[dgc] Shutting down MCP server..."; kill $MCP_PID 2>/dev/null' EXIT
+
+# Wait for MCP server to be ready (up to 20s)
+echo "[dgc] Waiting for MCP server..."
+for i in $(seq 1 20); do
+  if curl -sf "http://localhost:$MCP_PORT/mcp" -o /dev/null 2>/dev/null; then
+    break
+  fi
+  sleep 1
+done
+
+echo "[dgc] MCP server ready."
 echo ""
 echo "[dgc] Starting claude..."
 echo ""
 
-# ── Start Claude Code (cd into project so CLAUDE.md is picked up) ────────────
+# ── Start Claude Code ─────────────────────────────────────────────────────────
 cd "$PROJECT"
 if [[ -n "$PROMPT" ]]; then
-  exec claude "$PROMPT"
+  claude "$PROMPT"
 else
-  exec claude
+  claude
 fi

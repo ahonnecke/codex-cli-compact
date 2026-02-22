@@ -4,10 +4,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
 import urllib.request
+
+# Suppress all INFO-level logs so the Claude CLI terminal stays clean
+logging.basicConfig(level=logging.ERROR)
+for _logger in ("uvicorn", "uvicorn.error", "uvicorn.access", "mcp", "anyio"):
+    logging.getLogger(_logger).setLevel(logging.ERROR)
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -1021,7 +1027,7 @@ echo "  dgc /path/to/project   # Claude Code (local MCP, fully private)"
     ]
 
     async def serve() -> None:
-        config = uvicorn.Config(mcp_app, host="0.0.0.0", port=port, log_level="info")
+        config = uvicorn.Config(mcp_app, host="0.0.0.0", port=port, log_level="error")
         await uvicorn.Server(config).serve()
 
     anyio.run(serve)

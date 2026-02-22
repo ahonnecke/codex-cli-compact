@@ -9,7 +9,7 @@
 # Setup (one time):
 #   curl -sSL https://codex-cli-compact-production.up.railway.app/install.sh | bash
 #   source ~/.zshrc
-#   pip install "mcp>=1.3.0" uvicorn anyio starlette
+#   python3 -m pip install "mcp>=1.3.0" uvicorn anyio starlette
 #   claude mcp add --transport http dual-graph http://localhost:8080/mcp
 
 set -euo pipefail

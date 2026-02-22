@@ -978,7 +978,7 @@ curl -sSL "$BASE_URL/dg"  -o "$INSTALL_DIR/dg"  && chmod +x "$INSTALL_DIR/dg"
 curl -sSL "$BASE_URL/dgc" -o "$INSTALL_DIR/dgc" && chmod +x "$INSTALL_DIR/dgc"
 
 echo "[install] Installing Python dependencies..."
-pip install "mcp>=1.3.0" uvicorn anyio starlette --quiet
+python3 -m pip install "mcp>=1.3.0" uvicorn anyio starlette --quiet
 
 # Add to PATH if not already there
 SHELL_RC="$HOME/.zshrc"

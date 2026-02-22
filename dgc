@@ -14,6 +14,12 @@
 
 set -euo pipefail
 
+# ── Ensure Python dependencies are installed ─────────────────────────────────
+if ! python3 -c "import mcp, uvicorn, anyio, starlette" 2>/dev/null; then
+  echo "[dgc] Installing required Python packages..."
+  pip install "mcp>=1.3.0" uvicorn anyio starlette --quiet
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT="${1:-$(pwd)}"
 PROJECT="$(cd "$PROJECT" && pwd)"   # resolve to absolute

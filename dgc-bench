@@ -2,18 +2,16 @@
 # dgc-bench — Real token benchmarking: dual-graph vs baseline
 #
 # Modes:
-#   dgc-bench --calibrate /path/to/project "prompt"
-#       Run the same prompt TWICE (with graph, then without) using git stash
-#       to undo/redo changes. Logs REAL tokens for both. Use this once to
-#       establish your project's multiplier.
+#   dgc-bench --live /path/to/workspace
+#       Interactive session: builds TWO projects side-by-side.
+#       Type prompts, each runs on both with-graph/ and without-graph/.
+#       Shows real tokens + quality comparison at the end.
 #
 #   dgc-bench /path/to/project "prompt"
-#       Run the prompt WITH graph only (makes real changes). Logs real tokens.
-#       Estimates baseline using the multiplier from --calibrate, or falls
-#       back to the measured default (15x).
+#       Single task WITH graph. Logs real tokens, estimates baseline.
 #
 #   dgc-bench --report
-#       Show cumulative analytics across all logged runs.
+#       Show cumulative analytics from all logged runs.
 
 set -euo pipefail
 
@@ -23,144 +21,369 @@ PYTHON="$VENV/bin/python3"
 BENCH_LOG="$SCRIPT_DIR/bench_log.jsonl"
 MCP_PORT=8080
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-_tokens_from_json() {
-  # Parse stream-json output: sum input+output from the final usage event
-  echo "$1" | "$PYTHON" - << 'PYEOF'
+# ── Shared helpers ────────────────────────────────────────────────────────────
+_tokens_from_stream() {
+  # Extract total tokens from claude --output-format stream-json output
+  "$PYTHON" - << 'PYEOF'
 import sys, json
-total_input = total_output = 0
+inp = out = 0
 for line in sys.stdin:
-    line = line.strip()
-    if not line:
-        continue
     try:
-        obj = json.loads(line)
+        obj = json.loads(line.strip())
     except Exception:
         continue
-    u = obj.get("usage") or obj.get("message", {}).get("usage", {})
-    if u:
-        total_input  = max(total_input,  int(u.get("input_tokens", 0)))
-        total_output = max(total_output, int(u.get("output_tokens", 0)))
-print(total_input + total_output)
+    for u in [obj.get("usage"), obj.get("message", {}).get("usage")]:
+        if u and isinstance(u, dict):
+            inp = max(inp, int(u.get("input_tokens",  0)))
+            out = max(out, int(u.get("output_tokens", 0)))
+print(inp + out)
 PYEOF
 }
 
-_cost_usd() {
-  # Sonnet 4.x pricing: $3/M input, $15/M output (approximate)
-  echo "$1 $2" | "$PYTHON" - << 'PYEOF'
-import sys
-parts = sys.stdin.read().split()
-inp, out = int(parts[0]), int(parts[1])
-cost = (inp * 3 + out * 15) / 1_000_000
-print(f"${cost:.4f}")
-PYEOF
-}
-
-_run_claude() {
-  # Run claude non-interactively, return stream-json output
-  local project="$1" prompt="$2"
-  cd "$project"
+_run_headless() {
+  # Run claude non-interactively, capture stream-json, return to stdout
+  local workdir="$1" prompt="$2"
+  cd "$workdir"
   claude --output-format stream-json --print "$prompt" 2>/dev/null || true
 }
 
-_clear_action_cache() {
-  local data_dir="$1"
-  rm -f "$data_dir/chat_action_graph.json" \
-        "$data_dir/retrieval_cache.json" \
-        "$data_dir/mcp_tool_calls.jsonl" 2>/dev/null || true
+_rebuild_graph() {
+  local workdir="$1" data_dir="$2"
+  mkdir -p "$data_dir"
+  "$VENV/bin/python3" "$SCRIPT_DIR/graph_builder.py" \
+    --root "$workdir" --out "$data_dir/info_graph.json" 2>/dev/null
+}
+
+_start_mcp_server() {
+  local data_dir="$1" workdir="$2"
+  if nc -z localhost $MCP_PORT 2>/dev/null; then
+    # Already running — restart with new data dir
+    lsof -ti:$MCP_PORT 2>/dev/null | xargs kill -9 2>/dev/null || true
+    sleep 0.5
+  fi
+  DG_DATA_DIR="$data_dir" \
+  DUAL_GRAPH_PROJECT_ROOT="$workdir" \
+  DG_BASE_URL="http://localhost:$MCP_PORT" \
+  PORT=$MCP_PORT \
+    "$VENV/bin/python3" "$SCRIPT_DIR/mcp_graph_server.py" \
+      >> "$data_dir/mcp_server.log" 2>&1 &
+  MCP_PID=$!
+  for i in $(seq 1 20); do
+    nc -z localhost $MCP_PORT 2>/dev/null && break
+    sleep 1
+  done
+}
+
+_write_claude_md() {
+  local workdir="$1"
+  cat > "$workdir/CLAUDE.md" << 'CEOF'
+<!-- dgc-policy-v3 -->
+# Dual-Graph Context Policy
+
+This project uses a local dual-graph MCP server for efficient context retrieval.
+
+## MANDATORY: Always follow this order
+
+1. **Call `graph_continue` first** — before any file exploration, grep, or code reading.
+2. **If `graph_continue` returns `needs_project=true`**: call `graph_scan` with pwd. Do NOT ask.
+3. **Read `recommended_files`** using `graph_read`.
+4. **Check `confidence` and obey the caps strictly:**
+   - `confidence=high` → Stop. Do NOT grep or explore further.
+   - `confidence=medium` → at most `max_supplementary_greps` fallback_rg + `max_supplementary_files` graph_read.
+   - `confidence=low`   → at most `max_supplementary_greps` fallback_rg + `max_supplementary_files` graph_read.
+
+## Rules
+- Do NOT use rg/grep/bash before graph_continue.
+- Do NOT do broad exploration at any confidence level.
+- After edits, call graph_register_edit with changed files.
+CEOF
+}
+
+_quality_report() {
+  local with_dir="$1" without_dir="$2"
+  "$PYTHON" - "$with_dir" "$without_dir" << 'PYEOF'
+import sys, os
+from pathlib import Path
+
+def count_project(root):
+    skip = {'.dual-graph', 'node_modules', '__pycache__', '.git', 'dist', 'build', '.next'}
+    code_ext = {'.py','.ts','.tsx','.js','.jsx','.swift','.go','.css','.html','.sql'}
+    files = lines = 0
+    by_ext = {}
+    for p in Path(root).rglob('*'):
+        if any(s in p.parts for s in skip): continue
+        if not p.is_file(): continue
+        files += 1
+        if p.suffix in code_ext:
+            try:
+                c = p.read_text(errors='ignore').splitlines()
+                l = len([x for x in c if x.strip()])
+                lines += l
+                by_ext[p.suffix] = by_ext.get(p.suffix, 0) + l
+            except Exception:
+                pass
+    return files, lines, by_ext
+
+with_dir, without_dir = sys.argv[1], sys.argv[2]
+wf, wl, we = count_project(with_dir)
+nf, nl, ne = count_project(without_dir)
+
+print()
+print("╔══════════════════════════════════════════════════════════╗")
+print("║                  QUALITY COMPARISON                     ║")
+print("╠══════════════════════╦═══════════════╦═══════════════════╣")
+print("║ Metric               ║  With graph   ║  Without graph    ║")
+print("╠══════════════════════╬═══════════════╬═══════════════════╣")
+print(f"║ Total files          ║ {wf:>13} ║ {nf:>17} ║")
+print(f"║ Lines of code        ║ {wl:>13,} ║ {nl:>17,} ║")
+print("╠══════════════════════╩═══════════════╩═══════════════════╣")
+all_ext = sorted(set(list(we.keys()) + list(ne.keys())))
+if all_ext:
+    print("║ By file type:                                            ║")
+    for ext in all_ext:
+        print(f"║   {ext:<8}  with: {we.get(ext,0):>6} lines   without: {ne.get(ext,0):>6} lines      ║")
+print("╚══════════════════════════════════════════════════════════╝")
+print()
+
+# Show top-level file tree for both
+def tree(root, depth=2):
+    skip = {'.dual-graph','node_modules','__pycache__','.git','dist','build','.next','CLAUDE.md'}
+    result = []
+    for item in sorted(Path(root).iterdir()):
+        if item.name in skip: continue
+        result.append(f"  {'📁' if item.is_dir() else '📄'} {item.name}")
+        if item.is_dir() and depth > 1:
+            for sub in sorted(item.iterdir())[:6]:
+                if sub.name not in skip:
+                    result.append(f"    {'📁' if sub.is_dir() else '📄'} {sub.name}")
+    return '\n'.join(result[:30])
+
+print("WITH graph structure:")
+print(tree(with_dir))
+print()
+print("WITHOUT graph structure:")
+print(tree(without_dir))
+print()
+PYEOF
 }
 
 _log_run() {
-  local ts project mode tokens_with tokens_without duration_with duration_without multiplier
-  ts="$1" project="$2" mode="$3"
-  tokens_with="$4" tokens_without="$5"
-  duration_with="$6" duration_without="$7" multiplier="$8"
-  echo "{\"ts\":\"$ts\",\"project\":\"$project\",\"mode\":\"$mode\",\"tokens_with\":$tokens_with,\"tokens_without\":$tokens_without,\"duration_with\":$duration_with,\"duration_without\":$duration_without,\"multiplier\":$multiplier}" >> "$BENCH_LOG"
+  echo "{\"ts\":\"$1\",\"project\":\"$2\",\"mode\":\"$3\",\"prompt\":\"$4\",\"tokens_with\":$5,\"tokens_without\":$6,\"dur_with\":$7,\"dur_without\":$8}" >> "$BENCH_LOG"
 }
 
 # ── Report mode ───────────────────────────────────────────────────────────────
 if [[ "${1:-}" == "--report" ]]; then
-  if [[ ! -f "$BENCH_LOG" ]]; then
-    echo "No benchmark data yet. Run dgc-bench first."
-    exit 0
-  fi
+  [[ ! -f "$BENCH_LOG" ]] && echo "No data yet. Run dgc-bench first." && exit 0
   "$PYTHON" - "$BENCH_LOG" << 'PYEOF'
 import sys, json
-from datetime import datetime
 
-log_file = sys.argv[1]
 runs = []
-with open(log_file) as f:
-    for line in f:
-        line = line.strip()
-        if line:
-            try:
-                runs.append(json.loads(line))
-            except Exception:
-                pass
+for line in open(sys.argv[1]):
+    try: runs.append(json.loads(line.strip()))
+    except: pass
 
 if not runs:
     print("No data.")
     sys.exit(0)
 
-total_with    = sum(r["tokens_with"]    for r in runs)
-total_without = sum(r["tokens_without"] for r in runs)
-calibrated    = [r for r in runs if r["mode"] == "calibrate"]
-tracked       = [r for r in runs if r["mode"] == "track"]
-savings       = total_without - total_with
-pct           = (savings / total_without * 100) if total_without > 0 else 0
-cost_with     = (total_with    * 3) / 1_000_000 * 1.5   # rough blended rate
-cost_without  = (total_without * 3) / 1_000_000 * 1.5
+tw = sum(r["tokens_with"] for r in runs)
+tn = sum(r["tokens_without"] for r in runs)
+saved = tn - tw
+pct = saved / tn * 100 if tn > 0 else 0
 
-sep = "─" * 52
 print()
 print("╔══════════════════════════════════════════════════════╗")
-print("║          DUAL-GRAPH BENCHMARK REPORT                ║")
+print("║            DUAL-GRAPH CUMULATIVE REPORT              ║")
 print("╠══════════════════════════════════════════════════════╣")
-print(f"║  Total tasks logged   : {len(runs):<28}║")
-print(f"║  Calibrated runs      : {len(calibrated):<28}║")
-print(f"║  Tracked runs         : {len(tracked):<28}║")
+print(f"║  Tasks completed      : {len(runs):<28}║")
 print("╠══════════════════════════════════════════════════════╣")
-print(f"║  Tokens WITH graph    : {total_with:>12,}               ║")
-print(f"║  Tokens WITHOUT graph : {total_without:>12,}               ║")
-print(f"║  Tokens SAVED         : {savings:>12,}               ║")
+print(f"║  Tokens WITH graph    : {tw:>12,}               ║")
+print(f"║  Tokens WITHOUT graph : {tn:>12,}               ║")
+print(f"║  Tokens SAVED         : {saved:>12,}               ║")
 print(f"║  Reduction            : {pct:>11.1f}%               ║")
 print("╠══════════════════════════════════════════════════════╣")
-print(f"║  Est. cost with graph : {f'${cost_with:.4f}':>12}               ║")
-print(f"║  Est. cost without    : {f'${cost_without:.4f}':>12}               ║")
-print(f"║  Est. money saved     : {f'${cost_without - cost_with:.4f}':>12}               ║")
-print("╠══════════════════════════════════════════════════════╣")
-if runs:
-    avg_mult = sum(r["multiplier"] for r in runs) / len(runs)
-    print(f"║  Avg token multiplier : {f'{avg_mult:.1f}x':>12}               ║")
+cost_w = tw * 9 / 1_000_000
+cost_n = tn * 9 / 1_000_000
+print(f"║  Est. cost with graph : ${cost_w:>10.4f}               ║")
+print(f"║  Est. cost without    : ${cost_n:>10.4f}               ║")
+print(f"║  Est. money saved     : ${cost_n-cost_w:>10.4f}               ║")
 print("╚══════════════════════════════════════════════════════╝")
 print()
-
-if len(runs) > 1:
-    print("Per-task breakdown:")
-    print(f"{'#':<3} {'Mode':<10} {'With':>8} {'Without':>10} {'Saved':>8} {'Mult':>6}")
-    print("─" * 50)
-    for i, r in enumerate(runs, 1):
-        mult = f"{r['multiplier']:.1f}x"
-        saved = r['tokens_without'] - r['tokens_with']
-        print(f"{i:<3} {r['mode']:<10} {r['tokens_with']:>8,} {r['tokens_without']:>10,} {saved:>8,} {mult:>6}")
-    print()
+print(f"{'#':<3} {'Tokens W':>9} {'Tokens N':>10} {'Saved%':>7}  Prompt")
+print("─" * 72)
+for i, r in enumerate(runs, 1):
+    tw_r = r["tokens_with"]
+    tn_r = r["tokens_without"]
+    p_r  = (tn_r - tw_r) / tn_r * 100 if tn_r > 0 else 0
+    prompt = r.get("prompt","")[:40]
+    print(f"{i:<3} {tw_r:>9,} {tn_r:>10,} {p_r:>6.1f}%  {prompt}")
+print()
 PYEOF
   exit 0
 fi
 
-# ── Parse args ────────────────────────────────────────────────────────────────
-CALIBRATE=false
-if [[ "${1:-}" == "--calibrate" ]]; then
-  CALIBRATE=true
-  shift
+# ── Live mode ─────────────────────────────────────────────────────────────────
+if [[ "${1:-}" == "--live" ]]; then
+  if [[ $# -lt 2 ]]; then
+    echo "Usage: dgc-bench --live /path/to/workspace"
+    exit 1
+  fi
+  WORKSPACE="$(mkdir -p "$2" && cd "$2" && pwd)"
+  WITH_DIR="$WORKSPACE/with-graph"
+  WITHOUT_DIR="$WORKSPACE/without-graph"
+  WITH_DATA="$WITH_DIR/.dual-graph"
+  SESSION_LOG="$WORKSPACE/bench_session.jsonl"
+  TS_SESSION="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  mkdir -p "$WITH_DIR" "$WITHOUT_DIR"
+
+  # Init git in both
+  [[ ! -d "$WITH_DIR/.git" ]]    && git -C "$WITH_DIR" init -q
+  [[ ! -d "$WITHOUT_DIR/.git" ]] && git -C "$WITHOUT_DIR" init -q
+
+  echo ""
+  echo "╔══════════════════════════════════════════════════════════╗"
+  echo "║           dgc-bench --live  INTERACTIVE MODE            ║"
+  echo "╠══════════════════════════════════════════════════════════╣"
+  echo "║  WITH graph    → $WITH_DIR"
+  echo "║  WITHOUT graph → $WITHOUT_DIR"
+  echo "╠══════════════════════════════════════════════════════════╣"
+  echo "║  Type a prompt and press Enter.                         ║"
+  echo "║  Type 'done' to finish and see full report.             ║"
+  echo "║  Type 'report' to see running totals.                   ║"
+  echo "╚══════════════════════════════════════════════════════════╝"
+  echo ""
+
+  TOTAL_WITH=0
+  TOTAL_WITHOUT=0
+  TASK_NUM=0
+  MCP_PID=""
+
+  # Cleanup on exit
+  trap '[[ -n "$MCP_PID" ]] && kill $MCP_PID 2>/dev/null; claude mcp remove dual-graph 2>/dev/null || true' EXIT
+
+  while true; do
+    printf "\n[bench] Prompt #$((TASK_NUM+1)) > "
+    read -r PROMPT || break
+    [[ -z "$PROMPT" ]] && continue
+
+    if [[ "$PROMPT" == "done" ]]; then
+      break
+    fi
+
+    if [[ "$PROMPT" == "report" ]]; then
+      "$PYTHON" - "$SESSION_LOG" << 'PYEOF'
+import sys, json
+runs = []
+for line in open(sys.argv[1]):
+    try: runs.append(json.loads(line.strip()))
+    except: pass
+tw = sum(r["tw"] for r in runs)
+tn = sum(r["tn"] for r in runs)
+saved = tn - tw
+pct = saved/tn*100 if tn else 0
+print(f"\n  Running totals — {len(runs)} tasks")
+print(f"  WITH graph    : {tw:,} tokens")
+print(f"  WITHOUT graph : {tn:,} tokens")
+print(f"  Saved so far  : {saved:,} tokens ({pct:.1f}%)\n")
+PYEOF
+      continue
+    fi
+
+    TASK_NUM=$((TASK_NUM + 1))
+    TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    # ── RUN 1: WITH graph ─────────────────────────────────────────────────────
+    echo ""
+    echo "  [1/2] Running WITH dual-graph..."
+    _rebuild_graph "$WITH_DIR" "$WITH_DATA"
+    _start_mcp_server "$WITH_DATA" "$WITH_DIR"
+    _write_claude_md "$WITH_DIR"
+    claude mcp remove dual-graph 2>/dev/null || true
+    claude mcp add --transport http dual-graph "http://localhost:$MCP_PORT/mcp" 2>/dev/null
+
+    T1=$(date +%s)
+    WITH_OUT=$(_run_headless "$WITH_DIR" "$PROMPT")
+    T2=$(date +%s)
+    DUR_WITH=$((T2 - T1))
+    WITH_TOK=$(echo "$WITH_OUT" | _tokens_from_stream)
+
+    echo "  ✓ WITH graph    : ${WITH_TOK} tokens  (${DUR_WITH}s)"
+
+    # ── RUN 2: WITHOUT graph ──────────────────────────────────────────────────
+    echo "  [2/2] Running WITHOUT dual-graph..."
+    claude mcp remove dual-graph 2>/dev/null || true
+    # Kill MCP server so without-graph truly has no graph
+    [[ -n "$MCP_PID" ]] && kill $MCP_PID 2>/dev/null || true
+    lsof -ti:$MCP_PORT 2>/dev/null | xargs kill -9 2>/dev/null || true
+
+    T3=$(date +%s)
+    WITHOUT_OUT=$(_run_headless "$WITHOUT_DIR" "$PROMPT")
+    T4=$(date +%s)
+    DUR_WITHOUT=$((T4 - T3))
+    WITHOUT_TOK=$(echo "$WITHOUT_OUT" | _tokens_from_stream)
+
+    echo "  ✓ WITHOUT graph : ${WITHOUT_TOK} tokens  (${DUR_WITHOUT}s)"
+
+    # ── Per-task result ───────────────────────────────────────────────────────
+    SAVED=$((WITHOUT_TOK - WITH_TOK))
+    PCT=0
+    [[ $WITHOUT_TOK -gt 0 ]] && PCT=$(echo "$WITH_TOK $WITHOUT_TOK" | "$PYTHON" -c "import sys; a,b=map(int,sys.stdin.read().split()); print(f'{(b-a)/b*100:.1f}')")
+
+    echo ""
+    echo "  ┌─────────────────────────────────────────────┐"
+    printf  "  │  WITH graph    : %'10d tokens  %4ds  │\n" "$WITH_TOK" "$DUR_WITH"
+    printf  "  │  WITHOUT graph : %'10d tokens  %4ds  │\n" "$WITHOUT_TOK" "$DUR_WITHOUT"
+    printf  "  │  Saved         : %'10d tokens  (%s%%)  │\n" "$SAVED" "$PCT"
+    echo "  └─────────────────────────────────────────────┘"
+
+    TOTAL_WITH=$((TOTAL_WITH + WITH_TOK))
+    TOTAL_WITHOUT=$((TOTAL_WITHOUT + WITHOUT_TOK))
+
+    # Log to session file
+    echo "{\"task\":$TASK_NUM,\"ts\":\"$TS\",\"prompt\":\"$PROMPT\",\"tw\":$WITH_TOK,\"tn\":$WITHOUT_TOK,\"dur_w\":$DUR_WITH,\"dur_n\":$DUR_WITHOUT}" >> "$SESSION_LOG"
+    # Log to global bench log
+    _log_run "$TS" "$WORKSPACE" "live" "$PROMPT" "$WITH_TOK" "$WITHOUT_TOK" "$DUR_WITH" "$DUR_WITHOUT"
+  done
+
+  # ── Final report ─────────────────────────────────────────────────────────
+  echo ""
+  echo "════════════════════════════════════════════════════════════"
+  echo "                   SESSION COMPLETE"
+  echo "════════════════════════════════════════════════════════════"
+
+  TOTAL_SAVED=$((TOTAL_WITHOUT - TOTAL_WITH))
+  TOTAL_PCT=0
+  [[ $TOTAL_WITHOUT -gt 0 ]] && TOTAL_PCT=$(echo "$TOTAL_WITH $TOTAL_WITHOUT" | "$PYTHON" -c "import sys; a,b=map(int,sys.stdin.read().split()); print(f'{(b-a)/b*100:.1f}')")
+
+  echo ""
+  echo "╔══════════════════════════════════════════════════════╗"
+  echo "║              FINAL TOKEN COMPARISON                  ║"
+  echo "╠══════════════════════════════════════════════════════╣"
+  printf "║  Tasks completed      : %-28s║\n" "$TASK_NUM"
+  printf "║  Tokens WITH graph    : %'12d               ║\n" "$TOTAL_WITH"
+  printf "║  Tokens WITHOUT graph : %'12d               ║\n" "$TOTAL_WITHOUT"
+  printf "║  Total tokens SAVED   : %'12d               ║\n" "$TOTAL_SAVED"
+  printf "║  Overall reduction    : %11s%%               ║\n" "$TOTAL_PCT"
+  echo "╚══════════════════════════════════════════════════════╝"
+
+  echo ""
+  echo "Generating quality comparison..."
+  _quality_report "$WITH_DIR" "$WITHOUT_DIR"
+
+  echo "  Session log : $SESSION_LOG"
+  echo "  with-graph  : $WITH_DIR"
+  echo "  without     : $WITHOUT_DIR"
+  echo ""
+  exit 0
 fi
 
+# ── Single task mode ──────────────────────────────────────────────────────────
 if [[ $# -lt 2 ]]; then
   echo "Usage:"
-  echo "  dgc-bench /path/to/project \"prompt\"           # track with graph"
-  echo "  dgc-bench --calibrate /path/to/project \"prompt\" # real comparison"
-  echo "  dgc-bench --report                             # show analytics"
+  echo "  dgc-bench --live /path/to/workspace          # interactive dual-build"
+  echo "  dgc-bench /path/to/project \"prompt\"          # single task with graph"
+  echo "  dgc-bench --report                           # cumulative analytics"
   exit 1
 fi
 
@@ -170,158 +393,47 @@ DATA_DIR="$PROJECT/.dual-graph"
 TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 echo ""
-echo "╔══════════════════════════════════════════════╗"
-echo "║           dgc-bench starting                ║"
-echo "╚══════════════════════════════════════════════╝"
-echo "  Project : $PROJECT"
-echo "  Prompt  : $PROMPT"
-echo "  Mode    : $( $CALIBRATE && echo 'calibrate (real both sides)' || echo 'track (graph only)' )"
-echo ""
-
-# Ensure venv exists
-if [[ ! -x "$VENV/bin/python3" ]]; then
-  echo "[bench] ERROR: venv not found at $VENV. Run dgc first."
-  exit 1
-fi
+echo "[bench] Project : $PROJECT"
+echo "[bench] Prompt  : $PROMPT"
 
 mkdir -p "$DATA_DIR"
+_rebuild_graph "$PROJECT" "$DATA_DIR"
+_start_mcp_server "$DATA_DIR" "$PROJECT"
 
-# Build graph
-echo "[bench] Building graph..."
-"$VENV/bin/python3" "$SCRIPT_DIR/graph_builder.py" \
-  --root "$PROJECT" --out "$DATA_DIR/info_graph.json" 2>/dev/null
-echo "[bench] Graph built."
-echo ""
-
-# Ensure MCP server running
-if ! nc -z localhost $MCP_PORT 2>/dev/null; then
-  echo "[bench] Starting MCP server..."
-  DG_DATA_DIR="$DATA_DIR" \
-  DUAL_GRAPH_PROJECT_ROOT="$PROJECT" \
-  DG_BASE_URL="http://localhost:$MCP_PORT" \
-  PORT=$MCP_PORT \
-    "$VENV/bin/python3" "$SCRIPT_DIR/mcp_graph_server.py" \
-      >> "$DATA_DIR/mcp_server.log" 2>&1 &
-  MCP_PID=$!
-  trap 'kill $MCP_PID 2>/dev/null' EXIT
-  for i in $(seq 1 20); do
-    nc -z localhost $MCP_PORT 2>/dev/null && break
-    sleep 1
-  done
-fi
-
-# Register MCP
 claude mcp remove dual-graph 2>/dev/null || true
 claude mcp add --transport http dual-graph "http://localhost:$MCP_PORT/mcp" 2>/dev/null
 
-# ── Run WITH graph ────────────────────────────────────────────────────────────
-echo "[bench] ── RUN 1: WITH dual-graph ──────────────────"
-_clear_action_cache "$DATA_DIR"
 T1=$(date +%s)
-WITH_OUTPUT=$(_run_claude "$PROJECT" "$PROMPT")
+OUT=$(_run_headless "$PROJECT" "$PROMPT")
 T2=$(date +%s)
-DURATION_WITH=$((T2 - T1))
+DUR=$((T2-T1))
+TOKENS=$(echo "$OUT" | _tokens_from_stream)
 
-WITH_TOKENS=$(_tokens_from_json "$WITH_OUTPUT")
-echo "[bench] WITH graph : ${WITH_TOKENS} tokens in ${DURATION_WITH}s"
-echo ""
-
-if $CALIBRATE; then
-  # ── Stash changes, run WITHOUT graph ───────────────────────────────────────
-  echo "[bench] Stashing changes for baseline run..."
-  cd "$PROJECT"
-  STASH_RESULT=$(git stash 2>&1 || true)
-
-  echo "[bench] ── RUN 2: WITHOUT dual-graph ─────────────────"
-  claude mcp remove dual-graph 2>/dev/null || true
-  # Temporarily rename CLAUDE.md so baseline has no graph policy
-  CLAUDE_MD="$PROJECT/CLAUDE.md"
-  if [[ -f "$CLAUDE_MD" ]]; then
-    mv "$CLAUDE_MD" "${CLAUDE_MD}.bench_bak"
-  fi
-
-  T3=$(date +%s)
-  WITHOUT_OUTPUT=$(_run_claude "$PROJECT" "$PROMPT")
-  T4=$(date +%s)
-  DURATION_WITHOUT=$((T4 - T3))
-
-  WITHOUT_TOKENS=$(_tokens_from_json "$WITHOUT_OUTPUT")
-  echo "[bench] WITHOUT graph : ${WITHOUT_TOKENS} tokens in ${DURATION_WITHOUT}s"
-
-  # Restore CLAUDE.md and re-register MCP
-  if [[ -f "${CLAUDE_MD}.bench_bak" ]]; then
-    mv "${CLAUDE_MD}.bench_bak" "$CLAUDE_MD"
-  fi
-  claude mcp add --transport http dual-graph "http://localhost:$MCP_PORT/mcp" 2>/dev/null
-
-  # Restore the graph-version changes (pop stash)
-  echo "[bench] Restoring graph-version changes..."
-  git stash pop 2>/dev/null || true
-
-  MULTIPLIER=$(echo "$WITH_TOKENS $WITHOUT_TOKENS" | "$PYTHON" - << 'PYEOF'
-import sys
-a, b = sys.stdin.read().split()
-a, b = int(a), int(b)
-print(f"{b/a:.2f}" if a > 0 else "0")
-PYEOF
-  )
-  MODE="calibrate"
-else
-  # Use learned multiplier from previous calibrations, default 15x
-  LEARNED_MULT=$("$PYTHON" - "$BENCH_LOG" << 'PYEOF' 2>/dev/null || echo "15.0"
+# Estimate without-graph using learned multiplier or default 15x
+MULT=$("$PYTHON" - "$BENCH_LOG" 2>/dev/null << 'PYEOF' || echo "15.0"
 import sys, json
 try:
     runs = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
-    calb = [r for r in runs if r["mode"] == "calibrate"]
-    if calb:
-        avg = sum(r["multiplier"] for r in calb) / len(calb)
-        print(f"{avg:.2f}")
+    live = [r for r in runs if r.get("mode")=="live" and r["tokens_without"]>0]
+    if live:
+        mults = [r["tokens_without"]/r["tokens_with"] for r in live if r["tokens_with"]>0]
+        print(f"{sum(mults)/len(mults):.2f}")
     else:
         print("15.0")
-except Exception:
-    print("15.0")
-PYEOF
-  )
-  WITHOUT_TOKENS=$(echo "$WITH_TOKENS $LEARNED_MULT" | "$PYTHON" - << 'PYEOF'
-import sys
-tok, mult = sys.stdin.read().split()
-print(int(float(tok) * float(mult)))
-PYEOF
-  )
-  DURATION_WITHOUT=0
-  MULTIPLIER="$LEARNED_MULT"
-  MODE="track"
-fi
-
-# ── Log and display results ───────────────────────────────────────────────────
-_log_run "$TS" "$PROJECT" "$MODE" \
-  "$WITH_TOKENS" "$WITHOUT_TOKENS" \
-  "$DURATION_WITH" "$DURATION_WITHOUT" "$MULTIPLIER"
-
-SAVED=$((WITHOUT_TOKENS - WITH_TOKENS))
-PCT=$(echo "$WITH_TOKENS $WITHOUT_TOKENS" | "$PYTHON" - << 'PYEOF'
-import sys
-a, b = sys.stdin.read().split()
-a, b = int(a), int(b)
-pct = (b - a) / b * 100 if b > 0 else 0
-print(f"{pct:.1f}")
+except: print("15.0")
 PYEOF
 )
 
+EST_WITHOUT=$(echo "$TOKENS $MULT" | "$PYTHON" -c "import sys; t,m=sys.stdin.read().split(); print(int(float(t)*float(m)))")
+SAVED=$((EST_WITHOUT - TOKENS))
+PCT=$(echo "$TOKENS $EST_WITHOUT" | "$PYTHON" -c "import sys; a,b=map(int,sys.stdin.read().split()); print(f'{(b-a)/b*100:.1f}')")
+
 echo ""
 echo "╔══════════════════════════════════════════════╗"
-echo "║              BENCHMARK RESULTS               ║"
-echo "╠══════════════════════════════════════════════╣"
-printf "║  WITH  dual-graph : %'10d tokens  %4ds  ║\n" "$WITH_TOKENS" "$DURATION_WITH"
-if $CALIBRATE; then
-  printf "║  WITHOUT (real)   : %'10d tokens  %4ds  ║\n" "$WITHOUT_TOKENS" "$DURATION_WITHOUT"
-else
-  printf "║  WITHOUT (est.)   : %'10d tokens  est.  ║\n" "$WITHOUT_TOKENS"
-fi
-echo "╠══════════════════════════════════════════════╣"
-printf "║  Tokens saved     : %'10d  (%.1f%% less)  ║\n" "$SAVED" "$PCT"
-printf "║  Multiplier       : %19.1fx          ║\n" "$MULTIPLIER"
+printf "║  WITH  graph   : %'10d tokens  %4ds  ║\n" "$TOKENS" "$DUR"
+printf "║  WITHOUT (est) : %'10d tokens         ║\n" "$EST_WITHOUT"
+printf "║  Saved         : %'10d tokens (%s%%)  ║\n" "$SAVED" "$PCT"
 echo "╚══════════════════════════════════════════════╝"
-echo ""
-echo "  Run 'dgc-bench --report' for cumulative analytics."
-echo ""
+echo "  Run 'dgc-bench --report' for cumulative stats."
+
+_log_run "$TS" "$PROJECT" "track" "$PROMPT" "$TOKENS" "$EST_WITHOUT" "$DUR" "0"

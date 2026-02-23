@@ -73,6 +73,57 @@ for line in sys.stdin:
         sys.stdout.flush()
 '
 
+_session_tokens() {
+  # Read total tokens from the most recent Claude session file for a project dir
+  local workdir="$1"
+  "$PYTHON" - "$workdir" 2>/dev/null << 'PYEOF' || echo 0
+import sys, json
+from pathlib import Path
+project = sys.argv[1]
+encoded = project.replace('/', '-')
+sessions_dir = Path.home() / '.claude' / 'projects' / encoded
+if not sessions_dir.exists():
+    print(0); exit()
+files = sorted(sessions_dir.glob('*.jsonl'), key=lambda f: f.stat().st_mtime)
+if not files:
+    print(0); exit()
+inp = out = 0
+for line in open(files[-1]):
+    try:
+        obj = json.loads(line.strip())
+        for u in [obj.get('usage'), (obj.get('message') or {}).get('usage')]:
+            if isinstance(u, dict):
+                inp = max(inp, u.get('input_tokens', 0) or 0)
+                out = max(out, u.get('output_tokens', 0) or 0)
+        inp = max(inp, obj.get('total_input_tokens', 0) or 0)
+        out = max(out, obj.get('total_output_tokens', 0) or 0)
+    except: pass
+print(inp + out)
+PYEOF
+}
+
+_run_interactive() {
+  # Run claude as full TUI; read tokens from session file after exit
+  local workdir="$1" label="$2"
+  echo ""
+  echo "  ─── $label ──────────────────────────────────────"
+  echo "  Claude is starting. Answer questions, then type /exit when done."
+  echo "  ─────────────────────────────────────────────────"
+  echo ""
+  (cd "$workdir" && claude) || true
+  echo ""
+  # Try to read tokens from session storage
+  local tok
+  tok=$(_session_tokens "$workdir")
+  if [[ "$tok" -gt 0 ]]; then
+    _LAST_TOKENS=$tok
+  else
+    printf "  Enter token count (shown in session footer, or 0 to skip): "
+    read -r tok
+    _LAST_TOKENS="${tok:-0}"
+  fi
+}
+
 _run_headless() {
   # Stream output live to terminal; capture tokens via temp file (subshell for cd)
   local workdir="$1" prompt="$2"
@@ -274,9 +325,11 @@ fi
 # ── Live mode ─────────────────────────────────────────────────────────────────
 if [[ "${1:-}" == "--live" ]]; then
   if [[ $# -lt 2 ]]; then
-    echo "Usage: dgc-bench --live /path/to/workspace"
+    echo "Usage: dgc-bench --live /path/to/workspace [--interactive]"
     exit 1
   fi
+  INTERACTIVE=false
+  [[ "${3:-}" == "--interactive" || "${4:-}" == "--interactive" ]] && INTERACTIVE=true
   WORKSPACE="$(mkdir -p "$2" && cd "$2" && pwd)"
   WITH_DIR="$WORKSPACE/with-graph"
   WITHOUT_DIR="$WORKSPACE/without-graph"
@@ -297,7 +350,12 @@ if [[ "${1:-}" == "--live" ]]; then
   echo "║  WITH graph    → $WITH_DIR"
   echo "║  WITHOUT graph → $WITHOUT_DIR"
   echo "╠══════════════════════════════════════════════════════════╣"
-  echo "║  Type a prompt and press Enter.                         ║"
+  if $INTERACTIVE; then
+  echo "║  Mode: INTERACTIVE — you run both sessions yourself.    ║"
+  else
+  echo "║  Mode: HEADLESS — both runs are automated.              ║"
+  fi
+  echo "║  Type a task and press Enter.                           ║"
   echo "║  Type 'done' to finish and see full report.             ║"
   echo "║  Type 'report' to see running totals.                   ║"
   echo "╚══════════════════════════════════════════════════════════╝"
@@ -351,13 +409,18 @@ PYEOF
     claude mcp remove dual-graph 2>/dev/null || true
     claude mcp add --transport http dual-graph "http://localhost:$MCP_PORT/mcp" 2>/dev/null
 
-    echo "  ┌── with-graph output ─────────────────────────"
     T1=$(date +%s)
-    _run_headless "$WITH_DIR" "$PROMPT"
+    if $INTERACTIVE; then
+      echo "  Task: $PROMPT"
+      _run_interactive "$WITH_DIR" "[1/2] WITH dual-graph — run this task in claude"
+    else
+      echo "  ┌── with-graph output ─────────────────────────"
+      _run_headless "$WITH_DIR" "$PROMPT"
+      echo "  └──────────────────────────────────────────────"
+    fi
     T2=$(date +%s)
     DUR_WITH=$((T2 - T1))
     WITH_TOK=$_LAST_TOKENS
-    echo "  └──────────────────────────────────────────────"
     echo "  ✓ WITH graph    : ${WITH_TOK} tokens  (${DUR_WITH}s)"
     if [[ "$WITH_TOK" -eq 0 && -s "$_BENCH_STDERR" ]]; then
       echo "  [debug] claude stderr: $(head -3 "$_BENCH_STDERR")" >&2
@@ -376,13 +439,18 @@ Do NOT use AskUserQuestion, EnterPlanMode, or any interactive tool.
 Do NOT ask clarifying questions. Proceed immediately with sensible defaults and build directly.
 NOMD
 
-    echo "  ┌── without-graph output ──────────────────────"
     T3=$(date +%s)
-    _run_headless "$WITHOUT_DIR" "$PROMPT"
+    if $INTERACTIVE; then
+      echo "  Task: $PROMPT"
+      _run_interactive "$WITHOUT_DIR" "[2/2] WITHOUT dual-graph — run the same task"
+    else
+      echo "  ┌── without-graph output ──────────────────────"
+      _run_headless "$WITHOUT_DIR" "$PROMPT"
+      echo "  └──────────────────────────────────────────────"
+    fi
     T4=$(date +%s)
     DUR_WITHOUT=$((T4 - T3))
     WITHOUT_TOK=$_LAST_TOKENS
-    echo "  └──────────────────────────────────────────────"
     echo "  ✓ WITHOUT graph : ${WITHOUT_TOK} tokens  (${DUR_WITHOUT}s)"
     if [[ "$WITHOUT_TOK" -eq 0 && -s "$_BENCH_STDERR" ]]; then
       echo "  [debug] claude stderr: $(head -3 "$_BENCH_STDERR")" >&2

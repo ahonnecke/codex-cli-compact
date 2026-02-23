@@ -9,7 +9,6 @@
 # Setup (one time):
 #   curl -sSL https://raw.githubusercontent.com/kunal12203/Codex-CLI-Compact/main/install.sh | bash
 #   source ~/.zshrc
-#   claude mcp add --transport http dual-graph http://localhost:8080/mcp
 
 set -euo pipefail
 
@@ -18,17 +17,9 @@ VENV="$SCRIPT_DIR/venv"
 PROJECT="${1:-$(pwd)}"
 PROJECT="$(cd "$PROJECT" && pwd)"   # resolve to absolute
 PROMPT="${2:-}"
+MCP_PORT=8080
 DATA_DIR="$PROJECT/.dual-graph"
-
-# ── Find a free port starting at 8080 ────────────────────────────────────────
-find_free_port() {
-  local port=8080
-  while lsof -ti:$port &>/dev/null; do
-    port=$((port + 1))
-  done
-  echo $port
-}
-MCP_PORT=$(find_free_port)
+PLIST="$HOME/Library/LaunchAgents/com.dual-graph.mcp.plist"
 
 # ── Ensure venv + deps exist ──────────────────────────────────────────────────
 if [[ ! -x "$VENV/bin/python3" ]]; then
@@ -93,21 +84,47 @@ echo "[dgc] Scanning project..."
 echo "[dgc] Scan complete."
 echo ""
 
-# ── Kill any stale MCP server on port $MCP_PORT ───────────────────────────────
-lsof -ti:$MCP_PORT 2>/dev/null | xargs kill -9 2>/dev/null || true
-sleep 0.5
+# ── Register persistent launchd service (survives reboots) ───────────────────
+mkdir -p "$HOME/Library/LaunchAgents"
+cat > "$PLIST" << PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.dual-graph.mcp</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$PYTHON</string>
+        <string>$SCRIPT_DIR/mcp_graph_server.py</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>DG_DATA_DIR</key>
+        <string>$DATA_DIR</string>
+        <key>DUAL_GRAPH_PROJECT_ROOT</key>
+        <string>$PROJECT</string>
+        <key>DG_BASE_URL</key>
+        <string>http://localhost:$MCP_PORT</string>
+        <key>PORT</key>
+        <string>$MCP_PORT</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>$DATA_DIR/mcp_server.log</string>
+    <key>StandardErrorPath</key>
+    <string>$DATA_DIR/mcp_server.log</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>
+PLIST_EOF
 
-# ── Start local MCP server ────────────────────────────────────────────────────
-echo "[dgc] Starting local MCP server on port $MCP_PORT ..."
-DG_DATA_DIR="$DATA_DIR" \
-DUAL_GRAPH_PROJECT_ROOT="$PROJECT" \
-DG_BASE_URL="http://localhost:$MCP_PORT" \
-PORT=$MCP_PORT \
-  "$PYTHON" "$SCRIPT_DIR/mcp_graph_server.py" >> "$DATA_DIR/mcp_server.log" 2>&1 &
-MCP_PID=$!
-
-# Kill server when claude exits
-trap 'echo ""; echo "[dgc] Shutting down MCP server..."; kill $MCP_PID 2>/dev/null' EXIT
+# Reload the service (stop old, start new with current project)
+launchctl unload "$PLIST" 2>/dev/null || true
+launchctl load "$PLIST"
+echo "[dgc] MCP server registered as persistent service (auto-starts on login)."
 
 # Wait for MCP server to be ready (up to 20s, TCP-level check)
 echo "[dgc] Waiting for MCP server..."
@@ -121,7 +138,7 @@ done
 echo "[dgc] MCP server ready on port $MCP_PORT."
 echo ""
 
-# ── Update claude MCP config to use the correct port ─────────────────────────
+# ── Update claude MCP config ──────────────────────────────────────────────────
 claude mcp remove dual-graph 2>/dev/null || true
 claude mcp add --transport http dual-graph "http://localhost:$MCP_PORT/mcp"
 echo "[dgc] MCP config updated → http://localhost:$MCP_PORT/mcp"
@@ -129,7 +146,7 @@ echo ""
 echo "[dgc] Starting claude..."
 echo ""
 
-# ── Start Claude Code ─────────────────────────────────────────────────────────
+# ── Start Claude Code (server persists after claude exits) ───────────────────
 cd "$PROJECT"
 if [[ -n "$PROMPT" ]]; then
   claude "$PROMPT"

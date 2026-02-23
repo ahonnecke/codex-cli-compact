@@ -48,12 +48,37 @@ _tokens_from_stream() {
 }
 
 _BENCH_STDERR="/tmp/dgc_bench_stderr.log"
+_LAST_TOKENS=0
+
+_DISPLAY_SCRIPT='
+import sys, json
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    try: obj = json.loads(line)
+    except: continue
+    if obj.get("type") == "assistant":
+        for block in obj.get("message", {}).get("content", []):
+            if block.get("type") == "text":
+                print(block["text"], end="", flush=True)
+            elif block.get("type") == "tool_use":
+                inp = str(block.get("input", {}))[:80]
+                print(f"\n  \033[90m→ {block[\"name\"]}({inp})\033[0m", flush=True)
+    elif obj.get("type") == "result":
+        print()  # newline after last output
+'
 
 _run_headless() {
-  # Run claude non-interactively, capture stream-json to stdout, stderr to debug log
+  # Stream output live to terminal while capturing stream-json for token counting
   local workdir="$1" prompt="$2"
+  local capfile="/tmp/dgc_bench_cap_$$.jsonl"
   cd "$workdir"
-  claude --output-format stream-json --verbose --print --dangerously-skip-permissions "$prompt" 2>"$_BENCH_STDERR" || true
+  claude --output-format stream-json --verbose --print --dangerously-skip-permissions "$prompt" \
+    2>"$_BENCH_STDERR" \
+    | tee "$capfile" \
+    | "$PYTHON" -c "$_DISPLAY_SCRIPT" || true
+  _LAST_TOKENS=$(cat "$capfile" | "$PYTHON" -c "$_TOK_SCRIPT" 2>/dev/null || echo 0)
+  rm -f "$capfile"
 }
 
 _rebuild_graph() {
@@ -311,12 +336,13 @@ PYEOF
     claude mcp remove dual-graph 2>/dev/null || true
     claude mcp add --transport http dual-graph "http://localhost:$MCP_PORT/mcp" 2>/dev/null
 
+    echo "  ┌── with-graph output ─────────────────────────"
     T1=$(date +%s)
-    WITH_OUT=$(_run_headless "$WITH_DIR" "$PROMPT")
+    _run_headless "$WITH_DIR" "$PROMPT"
     T2=$(date +%s)
     DUR_WITH=$((T2 - T1))
-    WITH_TOK=$(echo "$WITH_OUT" | _tokens_from_stream)
-
+    WITH_TOK=$_LAST_TOKENS
+    echo "  └──────────────────────────────────────────────"
     echo "  ✓ WITH graph    : ${WITH_TOK} tokens  (${DUR_WITH}s)"
     if [[ "$WITH_TOK" -eq 0 && -s "$_BENCH_STDERR" ]]; then
       echo "  [debug] claude stderr: $(head -3 "$_BENCH_STDERR")" >&2
@@ -329,12 +355,13 @@ PYEOF
     [[ -n "$MCP_PID" ]] && kill $MCP_PID 2>/dev/null || true
     lsof -ti:$MCP_PORT 2>/dev/null | xargs kill -9 2>/dev/null || true
 
+    echo "  ┌── without-graph output ──────────────────────"
     T3=$(date +%s)
-    WITHOUT_OUT=$(_run_headless "$WITHOUT_DIR" "$PROMPT")
+    _run_headless "$WITHOUT_DIR" "$PROMPT"
     T4=$(date +%s)
     DUR_WITHOUT=$((T4 - T3))
-    WITHOUT_TOK=$(echo "$WITHOUT_OUT" | _tokens_from_stream)
-
+    WITHOUT_TOK=$_LAST_TOKENS
+    echo "  └──────────────────────────────────────────────"
     echo "  ✓ WITHOUT graph : ${WITHOUT_TOK} tokens  (${DUR_WITHOUT}s)"
     if [[ "$WITHOUT_TOK" -eq 0 && -s "$_BENCH_STDERR" ]]; then
       echo "  [debug] claude stderr: $(head -3 "$_BENCH_STDERR")" >&2
@@ -419,10 +446,10 @@ claude mcp remove dual-graph 2>/dev/null || true
 claude mcp add --transport http dual-graph "http://localhost:$MCP_PORT/mcp" 2>/dev/null
 
 T1=$(date +%s)
-OUT=$(_run_headless "$PROJECT" "$PROMPT")
+_run_headless "$PROJECT" "$PROMPT"
 T2=$(date +%s)
 DUR=$((T2-T1))
-TOKENS=$(echo "$OUT" | _tokens_from_stream)
+TOKENS=$_LAST_TOKENS
 
 # Estimate without-graph using learned multiplier or default 15x
 MULT=$("$PYTHON" - "$BENCH_LOG" 2>/dev/null << 'PYEOF' || echo "15.0"

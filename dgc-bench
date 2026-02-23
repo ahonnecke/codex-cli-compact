@@ -412,11 +412,15 @@ import sys, json
 
 runs = []
 for line in open(sys.argv[1]):
-    try: runs.append(json.loads(line.strip()))
+    try:
+        r = json.loads(line.strip())
+        # Only include live/track runs (have tokens_with/tokens_without)
+        if 'tokens_with' in r and 'tokens_without' in r:
+            runs.append(r)
     except: pass
 
 if not runs:
-    print("No data.")
+    print("No live/track runs yet. Use '--live' mode or run dgc-bench /path 'prompt'.")
     sys.exit(0)
 
 tw = sum(r["tokens_with"] for r in runs)

@@ -324,6 +324,55 @@ You can also run this from UI now:
 4. Click **Dry Run Fix** first
 5. Click **Apply Fix** if dry-run output looks correct
 
+## Codex vs DG Session Logging (Dashboard Live Monitor)
+
+Use this to compare **normal Codex** (without graph) vs **DG launcher** (with graph)
+across two folders and auto-log prompts + real token usage into dashboard live monitor.
+
+1) Start dashboard server:
+
+```bash
+python3 /Users/krishnakant/Documents/Open\ source/beads-main/dual-graph-dashboard/server.py
+```
+
+2) Run in your **without-graph** folder and auto-log:
+
+```bash
+/Users/krishnakant/Documents/Open\ source/beads-main/dual-graph-dashboard/dg-bench \
+  --mode codex \
+  --project "/absolute/path/to/without-graph" \
+  --label "without-graph"
+```
+
+3) Run in your **with-graph** folder and auto-log:
+
+```bash
+/Users/krishnakant/Documents/Open\ source/beads-main/dual-graph-dashboard/dg-bench \
+  --mode dg \
+  --project "/absolute/path/to/with-graph" \
+  --label "with-graph"
+```
+
+4) Open dashboard and check **Live Token Monitor**:
+
+- [http://127.0.0.1:8787](http://127.0.0.1:8787)
+
+Notes:
+
+- `dg-bench` reads Codex session files from `~/.codex/sessions`.
+- It writes rows to `~/.dual-graph/bench_log.jsonl` (already used by `/api/bench-log`).
+- Use labels containing `with` / `without` so the dashboard aggregates correctly.
+
+Optional helpers:
+
+```bash
+# Log latest session for a project after manual run
+/Users/krishnakant/Documents/Open\ source/beads-main/dual-graph-dashboard/dg-bench --save --project "/absolute/path/to/with-graph" --label "with-graph"
+
+# Show aggregate totals from the same bench log file
+/Users/krishnakant/Documents/Open\ source/beads-main/dual-graph-dashboard/dg-bench --report
+```
+
 ## Mount in Existing Project
 
 Set project root to scan via environment variable:

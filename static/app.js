@@ -523,6 +523,20 @@ async function logComparison() {
   }
 }
 
+function _fmtTs(ts) {
+  return (ts || "").replace("T", "  ").replace("Z", "");
+}
+function _fmtDur(secs) {
+  if (!secs) return "-";
+  if (secs < 60) return `${secs}s`;
+  return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+}
+function _sanitize(str) {
+  const d = document.createElement("div");
+  d.textContent = str;
+  return d.innerHTML;
+}
+
 async function refreshBenchLog() {
   try {
     const data = await api("/api/bench-log");
@@ -544,18 +558,69 @@ async function refreshBenchLog() {
     tbody.innerHTML = "";
     (data.recent || []).forEach((row) => {
       const tr = document.createElement("tr");
-      const saved = row.saved ?? null;
-      const savedStr = saved !== null ? saved.toLocaleString() : "-";
-      const savedStyle = saved !== null && saved > 0 ? "color:#0e6b56;font-weight:600" : saved !== null && saved < 0 ? "color:#be5a28" : "";
-      const withVal = typeof row.with === "number" ? row.with.toLocaleString() : (row.tokens != null ? row.tokens.toLocaleString() : "-");
-      const withoutVal = typeof row.without === "number" ? row.without.toLocaleString() : "-";
+      const isSession = (row.mode || "").startsWith("session");
+
+      // Mode badge
+      let modeLabel = row.mode || "";
+      let modeCls = "mode-badge";
+      if (modeLabel === "live") modeCls += " mode-live";
+      else if (modeLabel.includes("with-graph")) modeCls += " mode-with";
+      else if (modeLabel.includes("without-graph")) modeCls += " mode-without";
+      const modeBadge = `<span class="${modeCls}">${_sanitize(modeLabel)}</span>`;
+
+      // Prompt cell
+      const promptFull = _sanitize(row.prompt || "");
+      const promptShort = _sanitize((row.prompt || "").slice(0, 72)) + ((row.prompt || "").length > 72 ? "…" : "");
+      const promptCount = row.prompt_count ? ` <span class="muted">(+${row.prompt_count - 1} more)</span>` : "";
+      const promptCell = `<span class="prompt-cell" title="${promptFull}">${promptShort}</span>${promptCount}`;
+
+      // With / Without / Saved columns
+      let withVal, withoutVal, savedCell;
+      if (isSession) {
+        withVal = row.tok_with > 0 ? row.tok_with.toLocaleString() : "-";
+        withoutVal = row.tok_without > 0 ? row.tok_without.toLocaleString() : "-";
+        savedCell = "-";
+      } else {
+        withVal = typeof row.with === "number" ? row.with.toLocaleString() : "-";
+        withoutVal = typeof row.without === "number" ? row.without.toLocaleString() : "-";
+        const saved = row.saved ?? null;
+        if (saved !== null && saved > 0) {
+          savedCell = `<span class="tok-saved">+${saved.toLocaleString()}</span>`;
+        } else if (saved !== null && saved < 0) {
+          savedCell = `<span class="tok-cost">${saved.toLocaleString()}</span>`;
+        } else {
+          savedCell = saved !== null ? saved.toLocaleString() : "-";
+        }
+      }
+
+      // Duration column
+      let durCell;
+      if (isSession) {
+        durCell = "-";
+      } else {
+        const dw = _fmtDur(row.dur_with);
+        const dwo = _fmtDur(row.dur_without);
+        durCell = `w:${dw} / wo:${dwo}`;
+      }
+
+      // inp / out column
+      let inpOut;
+      if (isSession && (row.inp != null || row.out != null)) {
+        inpOut = `${(row.inp || 0).toLocaleString()} / ${(row.out || 0).toLocaleString()}`;
+      } else {
+        inpOut = "-";
+      }
+
       tr.innerHTML = `
-        <td>${(row.ts || "").replace("T", " ").replace("Z", "")}</td>
-        <td title="${row.project || ""}">${(row.project || "unknown").slice(-28)}</td>
-        <td>${row.mode || ""}</td>
-        <td>${withVal}</td>
-        <td>${withoutVal}</td>
-        <td style="${savedStyle}">${savedStr}</td>
+        <td class="ts-cell">${_sanitize(_fmtTs(row.ts))}</td>
+        <td class="num-cell" title="${_sanitize(row.project || "")}">${_sanitize((row.project || "unknown").slice(-28))}</td>
+        <td>${modeBadge}</td>
+        <td>${promptCell}</td>
+        <td class="num-cell">${withVal}</td>
+        <td class="num-cell">${withoutVal}</td>
+        <td class="num-cell">${savedCell}</td>
+        <td class="num-cell">${durCell}</td>
+        <td class="num-cell">${inpOut}</td>
       `;
       tbody.appendChild(tr);
     });
@@ -576,6 +641,11 @@ async function init() {
   document.getElementById("fix-chat-form").addEventListener("submit", sendFixChat);
   document.getElementById("fix-dry-run-btn").addEventListener("click", () => runFix(false));
   document.getElementById("fix-apply-btn").addEventListener("click", () => runFix(true));
+  document.getElementById("bench-log-reset-btn").addEventListener("click", async () => {
+    if (!confirm("Clear the entire live monitor log?")) return;
+    await api("/api/bench-log-reset", "POST", {});
+    await refreshBenchLog();
+  });
   await refreshGraph();
   await refreshSummary();
   refreshBenchLog();

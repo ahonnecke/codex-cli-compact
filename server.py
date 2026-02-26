@@ -121,6 +121,10 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/token-reset":
                 self.reset_token_log()
                 return
+            if parsed.path == "/api/bench-log-reset":
+                BENCH_LOG_PATH.write_text("", encoding="utf-8")
+                self.write_json({"ok": True})
+                return
             if parsed.path == "/ingest-graph":
                 self.ingest_graph()
                 return
@@ -288,18 +292,19 @@ class Handler(BaseHTTPRequestHandler):
             elif mode == "session":
                 label = str(e.get("label", ""))
                 tokens = int(e.get("tokens", 0) or 0)
-                if "with" in label:
-                    total_with += tokens
-                    by_project[project]["with"] += tokens
-                elif "without" in label:
+                # Check "without" BEFORE "with" — "without-graph" contains "with"
+                if "without" in label:
                     total_without += tokens
                     by_project[project]["without"] += tokens
+                elif "with" in label:
+                    total_with += tokens
+                    by_project[project]["with"] += tokens
 
         total_saved = total_without - total_with
         pct_saved = round((total_saved / total_without * 100), 1) if total_without > 0 else 0.0
 
         recent: list[dict] = []
-        for e in entries[-30:]:
+        for e in entries[-50:]:
             mode = str(e.get("mode", ""))
             proj = str(e.get("project", "")).split("/")[-1]
             if mode == "live":
@@ -312,15 +317,27 @@ class Handler(BaseHTTPRequestHandler):
                     "with": tw,
                     "without": two,
                     "saved": two - tw,
+                    "prompt": str(e.get("prompt", ""))[:220],
+                    "dur_with": int(e.get("dur_with", 0) or 0),
+                    "dur_without": int(e.get("dur_without", 0) or 0),
                 })
             elif mode == "session":
+                ps = list(e.get("prompts") or [])
+                label = str(e.get("label", ""))
+                tokens = int(e.get("tokens", 0) or 0)
+                is_without = "without" in label
                 recent.append({
                     "ts": str(e.get("ts", "")),
                     "project": proj,
-                    "mode": f"session/{e.get('label', '')}",
-                    "tokens": int(e.get("tokens", 0) or 0),
+                    "mode": f"session/{label}",
+                    "label": label,
+                    "tokens": tokens,
+                    "tok_with": 0 if is_without else tokens,
+                    "tok_without": tokens if is_without else 0,
                     "inp": int(e.get("inp", 0) or 0),
                     "out": int(e.get("out", 0) or 0),
+                    "prompt": str(ps[0])[:220] if ps else "",
+                    "prompt_count": len(ps),
                 })
 
         self.write_json({

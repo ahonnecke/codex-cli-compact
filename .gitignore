@@ -24,6 +24,9 @@ comparison/
 # Node
 node_modules/
 
+# License server (private — deployed to Railway separately)
+license/
+
 # Secrets — never commit
 .env
 .env.*

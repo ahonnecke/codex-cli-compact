@@ -11,6 +11,13 @@ mkdir -p "$INSTALL_DIR"
 
 # ── License check (free mode: server returns public URLs, paid mode: validates key) ──
 echo "[install] Checking license..."
+# ── Python version check ──────────────────────────────────────────────────────
+PY_VER=$(python3 -c "import sys; print(sys.version_info >= (3,10))" 2>/dev/null || echo "False")
+if [[ "$PY_VER" != "True" ]]; then
+  echo "[install] Error: Python 3.10+ required. Install from https://python.org"
+  exit 1
+fi
+
 LICENSE_KEY="${DG_LICENSE_KEY:-}"
 MACHINE_ID=$(python3 -c "import uuid; print(uuid.getnode())" 2>/dev/null || echo "unknown")
 
@@ -66,6 +73,7 @@ echo "[install] Creating Python venv at $VENV ..."
 python3 -m venv "$VENV"
 
 echo "[install] Installing Python dependencies..."
+"$VENV/bin/pip" install --upgrade pip --quiet
 "$VENV/bin/pip" install "mcp>=1.3.0" uvicorn anyio starlette --quiet
 
 # Add to PATH if not already there

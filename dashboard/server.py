@@ -63,6 +63,12 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/token-summary":
                 self.serve_token_summary()
                 return
+            if parsed.path == "/api/token-dataset":
+                self.serve_token_dataset()
+                return
+            if parsed.path == "/api/token-dataset.csv":
+                self.serve_token_dataset_csv()
+                return
             if parsed.path == "/api/bench-log":
                 self.serve_bench_log()
                 return
@@ -226,6 +232,71 @@ class Handler(BaseHTTPRequestHandler):
             "by_mode": by_mode,
             "recent": events[-30:],
         })
+
+    def _load_token_events(self) -> list[dict]:
+        events: list[dict] = []
+        if TOKEN_LOG.exists():
+            for line in TOKEN_LOG.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        return events
+
+    def serve_token_dataset(self) -> None:
+        """GET /api/token-dataset — turn-by-turn token usage with cumulative totals."""
+        events = self._load_token_events()
+        cumulative = 0
+        turns = []
+        for i, ev in enumerate(events, start=1):
+            total = int(ev.get("total_tokens", 0))
+            cumulative += total
+            turns.append({
+                "turn": i,
+                "timestamp": ev.get("timestamp", ""),
+                "mode": ev.get("mode", "unknown"),
+                "prompt_tokens": int(ev.get("prompt_tokens", 0)),
+                "completion_tokens": int(ev.get("completion_tokens", 0)),
+                "total_tokens": total,
+                "cumulative_tokens": cumulative,
+                "notes": ev.get("notes", ""),
+            })
+        self.write_json({
+            "turn_count": len(turns),
+            "total_tokens": cumulative,
+            "turns": turns,
+        })
+
+    def serve_token_dataset_csv(self) -> None:
+        """GET /api/token-dataset.csv — download as CSV file."""
+        import io, csv as _csv
+        events = self._load_token_events()
+        buf = io.StringIO()
+        writer = _csv.writer(buf)
+        writer.writerow(["turn", "timestamp", "mode", "prompt_tokens", "completion_tokens", "total_tokens", "cumulative_tokens", "notes"])
+        cumulative = 0
+        for i, ev in enumerate(events, start=1):
+            total = int(ev.get("total_tokens", 0))
+            cumulative += total
+            writer.writerow([
+                i,
+                ev.get("timestamp", ""),
+                ev.get("mode", "unknown"),
+                int(ev.get("prompt_tokens", 0)),
+                int(ev.get("completion_tokens", 0)),
+                total,
+                cumulative,
+                ev.get("notes", ""),
+            ])
+        data = buf.getvalue().encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/csv; charset=utf-8")
+        self.send_header("Content-Disposition", "attachment; filename=\"token_usage_dataset.csv\"")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def serve_bench_log(self) -> None:
         entries: list[dict] = []

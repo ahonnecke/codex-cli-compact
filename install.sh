@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-LICENSE_SERVER="https://dual-graph-license.up.railway.app"
+LICENSE_SERVER="https://dual-graph-license-production.up.railway.app"
 INSTALL_DIR="$HOME/.dual-graph"
 VENV="$INSTALL_DIR/venv"
 mkdir -p "$INSTALL_DIR"

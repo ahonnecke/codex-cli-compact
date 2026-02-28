@@ -5,7 +5,7 @@
 #   $env:DG_LICENSE_KEY="XXXX-XXXX-XXXX-XXXX"; irm https://raw.githubusercontent.com/kunal12203/Codex-CLI-Compact/main/install.ps1 | iex
 
 $ErrorActionPreference = "Stop"
-$LICENSE_SERVER = "https://dual-graph-license.up.railway.app"
+$LICENSE_SERVER = "https://dual-graph-license-production.up.railway.app"
 $BASE_URL       = "https://raw.githubusercontent.com/kunal12203/Codex-CLI-Compact/main"
 $INSTALL_DIR    = "$env:USERPROFILE\.dual-graph"
 

@@ -28,7 +28,7 @@ fi
 # We override PORT here so server.py does not consume Railway's public PORT.
 echo "[start] starting dashboard API on 127.0.0.1:$INTERNAL_PORT"
 DUAL_GRAPH_PORT=$INTERNAL_PORT PORT=$INTERNAL_PORT \
-    python3 "$APP_DIR/server.py" &
+    python3 "$APP_DIR/dashboard/server.py" &
 DASHBOARD_PID=$!
 
 # ── Wait for dashboard to be ready (up to 30 s) ──────────────────────────────
@@ -54,4 +54,4 @@ export DG_BASE_URL="http://127.0.0.1:$INTERNAL_PORT"
 
 # ── Start MCP server (SSE, on Railway's public PORT) ─────────────────────────
 echo "[start] starting MCP SSE server on PORT=${PORT:-8080}"
-exec python3 "$APP_DIR/mcp_graph_server.py"
+exec python3 "$APP_DIR/core/mcp_graph_server.py"

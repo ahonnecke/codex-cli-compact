@@ -18,6 +18,12 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.parse import parse_qs
 
+# core/ lives one level up from dashboard/
+import sys as _sys
+_CORE_DIR = Path(__file__).resolve().parent.parent / "core"
+if str(_CORE_DIR) not in _sys.path:
+    _sys.path.insert(0, str(_CORE_DIR))
+
 from graph_builder import scan
 from dg import retrieve
 

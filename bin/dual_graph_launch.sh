@@ -47,6 +47,26 @@ else
   POLICY_MARKER="dgc-policy-v4"
 fi
 
+# ── Self-update ────────────────────────────────────────────────────────────────
+_R2="https://pub-18426978d5a14bf4a60ddedd7d5b6dab.r2.dev"
+_LOCAL_VER="$(cat "$SCRIPT_DIR/version.txt" 2>/dev/null || echo "0")"
+_REMOTE_VER="$(curl -sf --max-time 3 "$_R2/version.txt" 2>/dev/null || echo "")"
+
+if [[ -n "$_REMOTE_VER" && "$_REMOTE_VER" != "$_LOCAL_VER" ]]; then
+  echo "[$TOOL_LABEL] Update available ($_LOCAL_VER → $_REMOTE_VER) — updating..."
+  curl -sSL "$_R2/mcp_graph_server.py"  -o "$SCRIPT_DIR/mcp_graph_server.py"
+  curl -sSL "$_R2/graph_builder.py"     -o "$SCRIPT_DIR/graph_builder.py"
+  curl -sSL "$_R2/dg.py"               -o "$SCRIPT_DIR/dg.py"
+  curl -sSL "$_R2/dual_graph_launch.sh" -o "$SCRIPT_DIR/dual_graph_launch.sh" \
+    && chmod +x "$SCRIPT_DIR/dual_graph_launch.sh"
+  echo "$_REMOTE_VER" > "$SCRIPT_DIR/version.txt"
+  echo "[$TOOL_LABEL] Updated to $_REMOTE_VER. Restarting..."
+  EXEC_ARGS=("$SCRIPT_DIR/dual_graph_launch.sh" "$ASSISTANT" "$PROJECT")
+  [[ -n "$PROMPT" ]] && EXEC_ARGS+=("$PROMPT")
+  exec "${EXEC_ARGS[@]}"
+fi
+# ──────────────────────────────────────────────────────────────────────────────
+
 if [[ ! -x "$VENV/bin/python3" ]]; then
   echo "[$TOOL_LABEL] Creating venv at $VENV ..."
   python3 -m venv "$VENV"

@@ -55,7 +55,7 @@ else
   TOOL_LABEL="dgc"
   DOC_FILE="$PROJECT/CLAUDE.md"
   DOC_NAME="CLAUDE.md"
-  POLICY_MARKER="dgc-policy-v7"
+  POLICY_MARKER="dgc-policy-v8"
 fi
 
 # ── Self-update ────────────────────────────────────────────────────────────────
@@ -203,8 +203,9 @@ This project uses a local dual-graph MCP server for efficient context retrieval.
 2. **If \`graph_continue\` returns \`needs_project=true\`**: call \`graph_scan\` with the
    current project directory (\`pwd\`). Do NOT ask the user.
 
-3. **If \`graph_continue\` returns \`skip=true\`**: project is too small for the graph to
-   help. Skip all graph tools and explore normally.
+3. **If \`graph_continue\` returns \`skip=true\`**: project has fewer than 5 files.
+   Do NOT do broad or recursive exploration. Read only specific files if their names
+   are mentioned, or ask the user what to work on.
 
 4. **Load context layers before implementation decisions**:
    - Read \`.dual-graph-context/PROJECT_CONTEXT.md\` and \`.dual-graph-context/SESSION_CONTEXT.md\` when available.
@@ -249,8 +250,9 @@ This project uses a local dual-graph MCP server for efficient context retrieval.
 2. **If \`graph_continue\` returns \`needs_project=true\`**: call \`graph_scan\` with the
    current project directory (\`pwd\`). Do NOT ask the user.
 
-3. **If \`graph_continue\` returns \`skip=true\`**: project is too small for the graph to
-   help. Skip all graph tools and explore normally.
+3. **If \`graph_continue\` returns \`skip=true\`**: project has fewer than 5 files.
+   Do NOT do broad or recursive exploration. Read only specific files if their names
+   are mentioned, or ask the user what to work on.
 
 4. **Read \`recommended_files\`** using \`graph_read\`.
    - \`recommended_files\` may contain \`file::symbol\` entries (e.g. \`src/auth.ts::handleLogin\`).
@@ -303,7 +305,7 @@ if [[ ! -f "$DOC_FILE" ]]; then
   _write_policy_doc
   echo "[$TOOL_LABEL] $DOC_NAME created."
 elif grep -q "graph_continue" "$DOC_FILE" && ! grep -q "$POLICY_MARKER" "$DOC_FILE"; then
-  echo "[$TOOL_LABEL] Upgrading $DOC_NAME to v7 policy ..."
+  echo "[$TOOL_LABEL] Upgrading $DOC_NAME to v8 policy ..."
   _write_policy_doc
   echo "[$TOOL_LABEL] $DOC_NAME upgraded."
 else

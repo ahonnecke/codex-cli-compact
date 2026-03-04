@@ -55,7 +55,7 @@ else
   TOOL_LABEL="dgc"
   DOC_FILE="$PROJECT/CLAUDE.md"
   DOC_NAME="CLAUDE.md"
-  POLICY_MARKER="dgc-policy-v8"
+  POLICY_MARKER="dgc-policy-v9"
 fi
 
 # ── Self-update ────────────────────────────────────────────────────────────────
@@ -232,7 +232,7 @@ This project uses a local dual-graph MCP server for efficient context retrieval.
 - Do NOT dump full chat history.
 - Do context handshake per task: summarize known context, then ask for only missing pieces.
 - Do NOT call \`graph_retrieve\` more than once per turn.
-- After edits, call \`graph_register_edit\` with the changed files.
+- After edits, call \`graph_register_edit\` with the changed files. Use \`file::symbol\` notation (e.g. \`src/auth.ts::handleLogin\`) when the edit targets a specific function, class, or hook.
 EOF
 }
 
@@ -286,7 +286,7 @@ Live dashboard URL is printed at startup next to "Token usage".
 - \`max_supplementary_greps\` and \`max_supplementary_files\` are hard caps - never exceed them.
 - Do NOT dump full chat history.
 - Do NOT call \`graph_retrieve\` more than once per turn.
-- After edits, call \`graph_register_edit\` with the changed files.
+- After edits, call \`graph_register_edit\` with the changed files. Use \`file::symbol\` notation (e.g. \`src/auth.ts::handleLogin\`) when the edit targets a specific function, class, or hook.
 EOF
 }
 
@@ -305,7 +305,7 @@ if [[ ! -f "$DOC_FILE" ]]; then
   _write_policy_doc
   echo "[$TOOL_LABEL] $DOC_NAME created."
 elif grep -q "graph_continue" "$DOC_FILE" && ! grep -q "$POLICY_MARKER" "$DOC_FILE"; then
-  echo "[$TOOL_LABEL] Upgrading $DOC_NAME to v8 policy ..."
+  echo "[$TOOL_LABEL] Upgrading $DOC_NAME to v9 policy ..."
   _write_policy_doc
   echo "[$TOOL_LABEL] $DOC_NAME upgraded."
 else

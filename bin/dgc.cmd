@@ -168,11 +168,11 @@ echo [%TOOL%] MCP server ready on port %MCP_PORT%.
 echo.
 
 :: ── Register MCPs ──────────────────────────────────────────────────────────
-call claude mcp remove dual-graph >nul 2>&1
-call claude mcp add --transport http dual-graph "http://localhost:%MCP_PORT%/mcp" >nul 2>&1
+cmd /d /c "claude mcp remove dual-graph" >nul 2>&1
+cmd /d /c "claude mcp add --transport http dual-graph \"http://localhost:%MCP_PORT%/mcp\"" >nul 2>&1
 echo [%TOOL%] MCP registered -^> http://localhost:%MCP_PORT%/mcp
-call claude mcp remove token-counter >nul 2>&1
-call claude mcp add token-counter -- npx -y token-counter-mcp >nul 2>&1
+cmd /d /c "claude mcp remove token-counter" >nul 2>&1
+cmd /d /c "claude mcp add token-counter -- npx -y token-counter-mcp" >nul 2>&1
 echo [%TOOL%] Token counter registered
 
 :: ── Context hooks (SessionStart + PreCompact) ─────────────────────────────
@@ -221,8 +221,8 @@ del "%RUN_BAT%" >nul 2>&1
 :: ── Cleanup after claude exits ─────────────────────────────────────────────
 echo.
 echo [%TOOL%] Cleaning up...
-call claude mcp remove dual-graph >nul 2>&1
-call claude mcp remove token-counter >nul 2>&1
+cmd /d /c "claude mcp remove dual-graph" >nul 2>&1
+cmd /d /c "claude mcp remove token-counter" >nul 2>&1
 if exist "%DATA_DIR%\mcp_server.pid" (
     set /p KILL_PID=<"%DATA_DIR%\mcp_server.pid"
     taskkill /PID !KILL_PID! /F /T >nul 2>&1

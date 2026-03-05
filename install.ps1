@@ -3,11 +3,43 @@
 #   irm https://raw.githubusercontent.com/kunal12203/Codex-CLI-Compact/main/install.ps1 | iex
 
 $ErrorActionPreference = "Stop"
+$LICENSE_SERVER = "https://dual-graph-license-production.up.railway.app"
 $R2          = "https://pub-18426978d5a14bf4a60ddedd7d5b6dab.r2.dev"
 $BASE_URL    = "https://raw.githubusercontent.com/kunal12203/Codex-CLI-Compact/main"
 $INSTALL_DIR = "$env:USERPROFILE\.dual-graph"
 
 New-Item -ItemType Directory -Force -Path $INSTALL_DIR | Out-Null
+
+# ── License check + install telemetry (same as install.sh flow) ───────────────
+Write-Host "[install] Checking license..."
+$licenseKey = "$env:DG_LICENSE_KEY"
+$machineId = (Get-CimInstance -ClassName Win32_ComputerSystemProduct -ErrorAction SilentlyContinue).UUID
+if ([string]::IsNullOrWhiteSpace($machineId)) { $machineId = "$env:COMPUTERNAME" }
+$payload = @{
+    key        = $licenseKey
+    machine_id = $machineId
+    platform   = "windows"
+    tool       = "install-ps1"
+    name       = "$env:DG_NAME"
+    email      = "$env:DG_EMAIL"
+}
+try {
+    $validateResp = Invoke-RestMethod `
+      -Uri "$LICENSE_SERVER/validate" `
+      -Method Post `
+      -ContentType "application/json" `
+      -Body ($payload | ConvertTo-Json -Compress) `
+      -TimeoutSec 10
+} catch {
+    Write-Host "[install] License check failed: server unreachable"
+    exit 1
+}
+if (-not $validateResp.ok) {
+    $err = "$($validateResp.error)"
+    if ([string]::IsNullOrWhiteSpace($err)) { $err = "unknown" }
+    Write-Host "[install] License check failed: $err"
+    exit 1
+}
 
 # ── Download core engine ──────────────────────────────────────────────────────
 Write-Host "[install] Downloading core engine..."

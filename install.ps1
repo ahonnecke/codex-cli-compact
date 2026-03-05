@@ -48,7 +48,7 @@ Write-Host "[install] Using $pythonExe ($verStr)"
 
 # ── Create venv ───────────────────────────────────────────────────────────────
 Write-Host "[install] Creating Python venv..."
-& $pythonExe -m venv "$INSTALL_DIR\venv" --clear
+& $pythonExe -m venv "$INSTALL_DIR\venv" --clear --copies
 
 Write-Host "[install] Installing Python dependencies..."
 & "$INSTALL_DIR\venv\Scripts\python.exe" -m pip install --upgrade pip --quiet

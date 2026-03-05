@@ -191,18 +191,10 @@ set "SETTINGS_FILE=%SETTINGS_DIR%\settings.local.json"
 ) > "%PRIME_PS1%"
 
 if not exist "%SETTINGS_DIR%" mkdir "%SETTINGS_DIR%"
-(
-    echo {
-    echo   "hooks": {
-    echo     "SessionStart": [
-    echo       {"matcher": "", "hooks": [{"type": "command", "command": "powershell -NoProfile -File \"%PRIME_PS1%\""}]}
-    echo     ],
-    echo     "PreCompact": [
-    echo       {"matcher": "", "hooks": [{"type": "command", "command": "powershell -NoProfile -File \"%PRIME_PS1%\""}]}
-    echo     ]
-    echo   }
-    echo }
-) > "%SETTINGS_FILE%"
+powershell -NoProfile -Command ^
+  "$cmd = 'powershell -NoProfile -File ""%PRIME_PS1%""';" ^
+  "$obj = @{ hooks = @{ SessionStart = @(@{ matcher = ''; hooks = @(@{ type = 'command'; command = $cmd }) }); PreCompact = @(@{ matcher = ''; hooks = @(@{ type = 'command'; command = $cmd }) }) } };" ^
+  "$obj | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath '%SETTINGS_FILE%' -Encoding UTF8"
 echo [%TOOL%] Context hooks ready ^(SessionStart + PreCompact^)
 
 :: ── Launch Claude (sub-batch so cleanup runs after Ctrl+C) ────────────────

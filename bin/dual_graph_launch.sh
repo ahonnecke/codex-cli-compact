@@ -55,7 +55,7 @@ else
   TOOL_LABEL="dgc"
   DOC_FILE="$PROJECT/CLAUDE.md"
   DOC_NAME="CLAUDE.md"
-  POLICY_MARKER="dgc-policy-v9"
+  POLICY_MARKER="dgc-policy-v10"
 fi
 
 # ── Self-update ────────────────────────────────────────────────────────────────
@@ -301,6 +301,32 @@ Live dashboard URL is printed at startup next to "Token usage".
 - Do NOT dump full chat history.
 - Do NOT call \`graph_retrieve\` more than once per turn.
 - After edits, call \`graph_register_edit\` with the changed files. Use \`file::symbol\` notation (e.g. \`src/auth.ts::handleLogin\`) when the edit targets a specific function, class, or hook.
+
+## Context Store
+
+Whenever you make a decision, identify a task, note a next step, fact, or blocker during a conversation, append it to \`.dual-graph/context-store.json\`.
+
+**Entry format:**
+\`\`\`json
+{"type": "decision|task|next|fact|blocker", "content": "one sentence max 15 words", "tags": ["topic"], "files": ["relevant/file.ts"], "date": "YYYY-MM-DD"}
+\`\`\`
+
+**To append:** Read the file → add the new entry to the array → Write it back → call \`graph_register_edit\` on \`.dual-graph/context-store.json\`.
+
+**Rules:**
+- Only log things worth remembering across sessions (not every minor detail)
+- \`content\` must be under 15 words
+- \`files\` lists the files this decision/task relates to (can be empty)
+- Log immediately when the item arises — not at session end
+
+## Session End
+
+When the user signals they are done (e.g. "bye", "done", "wrap up", "end session"), proactively update \`CONTEXT.md\` in the project root with:
+- **Current Task**: one sentence on what was being worked on
+- **Key Decisions**: bullet list, max 3 items
+- **Next Steps**: bullet list, max 3 items
+
+Keep \`CONTEXT.md\` under 20 lines total. Do NOT summarize the full conversation — only what's needed to resume next session.
 EOF
 }
 
@@ -319,11 +345,16 @@ if [[ ! -f "$DOC_FILE" ]]; then
   _write_policy_doc
   echo "[$TOOL_LABEL] $DOC_NAME created."
 elif grep -q "graph_continue" "$DOC_FILE" && ! grep -q "$POLICY_MARKER" "$DOC_FILE"; then
-  echo "[$TOOL_LABEL] Upgrading $DOC_NAME to v9 policy ..."
+  echo "[$TOOL_LABEL] Upgrading $DOC_NAME to v10 policy ..."
   _write_policy_doc
   echo "[$TOOL_LABEL] $DOC_NAME upgraded."
 else
   echo "[$TOOL_LABEL] $DOC_NAME already up to date, skipping."
+fi
+
+# Init context store if missing
+if [[ ! -f "$DATA_DIR/context-store.json" ]]; then
+  echo "[]" > "$DATA_DIR/context-store.json"
 fi
 
 echo "[$TOOL_LABEL] Scanning project..."
@@ -373,6 +404,20 @@ if [[ -f "$PROJECT/CONTEXT.md" ]]; then
   echo "=== CONTEXT.md ==="
   cat "$PROJECT/CONTEXT.md"
   echo "=== end CONTEXT.md ==="
+fi
+# Inject context store entries (decisions, tasks, next steps) — max 15 lines, 7-day window
+STORE="$PROJECT/.dual-graph/context-store.json"
+if [[ -f "\$STORE" ]] && command -v jq &>/dev/null; then
+  CUTOFF=\$(date -v-7d +%Y-%m-%d 2>/dev/null || date -d '7 days ago' +%Y-%m-%d 2>/dev/null || echo "2000-01-01")
+  ENTRIES=\$(jq -r --arg cutoff "\$CUTOFF" \
+    '[.[] | select(.date >= \$cutoff)] | .[:15] | .[] | "[" + .type + "] " + .content' \
+    "\$STORE" 2>/dev/null)
+  if [[ -n "\$ENTRIES" ]]; then
+    echo ""
+    echo "=== Stored Context ==="
+    echo "\$ENTRIES"
+    echo "=== end Stored Context ==="
+  fi
 fi
 # Never fail hooks due to stderr/exit behavior.
 exit 0

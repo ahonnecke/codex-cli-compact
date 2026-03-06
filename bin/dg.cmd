@@ -53,6 +53,20 @@ if not exist "%PROJECT%" (
 
 set "DATA_DIR=%PROJECT%\.dual-graph"
 
+:: ── Kill stale MCP server ──────────────────────────────────────────────────
+if exist "%DATA_DIR%\mcp_server.pid" (
+    set /p OLD_PID=<"%DATA_DIR%\mcp_server.pid"
+    taskkill /PID !OLD_PID! /F /T >nul 2>&1
+    del "%DATA_DIR%\mcp_server.pid" >nul 2>&1
+    timeout /t 2 /nobreak >nul
+)
+if exist "%DATA_DIR%\mcp_port" (
+    set /p OLD_PORT=<"%DATA_DIR%\mcp_port"
+    powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort !OLD_PORT! -State Listen -EA 0 | Select-Object -Expand OwningProcess | ForEach-Object { Stop-Process -Id $_ -Force -EA 0 }" >nul 2>&1
+    del "%DATA_DIR%\mcp_port" >nul 2>&1
+)
+del "%DATA_DIR%\mcp_server.log" >nul 2>&1
+
 :: ── Find a free port (8080-8099) ──────────────────────────────────────────
 if defined DG_MCP_PORT (
     set "MCP_PORT=%DG_MCP_PORT%"
@@ -102,6 +116,9 @@ if %errorlevel% neq 0 (
     timeout /t 1 /nobreak >nul
     goto :wait_loop
 )
+:: Save PID and port for cleanup
+powershell -NoProfile -Command "(Get-NetTCPConnection -LocalPort %MCP_PORT% -State Listen -EA 0).OwningProcess" > "%DATA_DIR%\mcp_server.pid" 2>nul
+echo %MCP_PORT%> "%DATA_DIR%\mcp_port"
 echo [%TOOL%] MCP server ready on port %MCP_PORT%.
 echo.
 
@@ -116,3 +133,19 @@ echo [%TOOL%] Starting Codex CLI...
 echo.
 cd /d "%PROJECT%"
 call codex
+
+:: ── Cleanup after codex exits ──────────────────────────────────────────────
+echo.
+echo [%TOOL%] Cleaning up...
+cmd /d /c "codex mcp remove dual-graph" >nul 2>&1
+if exist "%DATA_DIR%\mcp_server.pid" (
+    set /p KILL_PID=<"%DATA_DIR%\mcp_server.pid"
+    taskkill /PID !KILL_PID! /F /T >nul 2>&1
+    del "%DATA_DIR%\mcp_server.pid" >nul 2>&1
+)
+if exist "%DATA_DIR%\mcp_port" (
+    set /p KILL_PORT=<"%DATA_DIR%\mcp_port"
+    powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort !KILL_PORT! -State Listen -EA 0 | Select-Object -Expand OwningProcess | ForEach-Object { Stop-Process -Id $_ -Force -EA 0 }" >nul 2>&1
+    del "%DATA_DIR%\mcp_port" >nul 2>&1
+)
+echo [%TOOL%] Done.

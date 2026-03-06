@@ -7,7 +7,7 @@ setlocal enabledelayedexpansion
 set "DG=%USERPROFILE%\.dual-graph"
 set "PYTHON=%DG%\venv\Scripts\python.exe"
 set "TOOL=dgc"
-set "POLICY_MARKER=dgc-policy-v9"
+set "POLICY_MARKER=dgc-policy-v10"
 set "R2=https://pub-18426978d5a14bf4a60ddedd7d5b6dab.r2.dev"
 set "BASE_URL=https://raw.githubusercontent.com/kunal12203/Codex-CLI-Compact/main"
 set "NOTICE_FILE=%DG%\last_update_notice.txt"
@@ -127,6 +127,11 @@ if "%NEED_WRITE%"=="1" (
         echo 4. Read recommended_files using graph_read.
         echo 5. Obey confidence caps: high=stop, medium/low=limited fallback_rg then stop.
         echo.
+        echo ## Session Context
+        echo - CONTEXT.md is auto-injected at session start if it exists in the project root.
+        echo - At end of session, update CONTEXT.md: current task, key decisions, next steps.
+        echo - Keep it under 400 tokens. Do NOT dump full history.
+        echo.
         echo ## Rules
         echo - Do NOT use rg/grep/bash exploration before graph_continue.
         echo - After edits, call graph_register_edit with changed files.
@@ -198,6 +203,8 @@ set "SETTINGS_FILE=%SETTINGS_DIR%\settings.local.json"
     echo } catch {
     echo     Write-Error "[dual-graph] MCP server not reachable on port $port -- run dgc to restart"
     echo }
+    echo $ctxFile = '%PROJECT%\CONTEXT.md'
+    echo if ^(Test-Path $ctxFile^) { Write-Output ""; Write-Output "=== CONTEXT.md ==="; Get-Content $ctxFile -Raw; Write-Output "=== end CONTEXT.md ===" }
 ) > "%PRIME_PS1%"
 
 if not exist "%SETTINGS_DIR%" mkdir "%SETTINGS_DIR%"

@@ -367,6 +367,13 @@ OUT=\$(curl -sf --max-time 2 "http://localhost:\$PORT/prime" 2>/dev/null || true
 if [[ -n "\$OUT" ]]; then
   echo "\$OUT"
 fi
+# Inject CONTEXT.md if it exists (session carry-over, ~200 tokens)
+if [[ -f "$PROJECT/CONTEXT.md" ]]; then
+  echo ""
+  echo "=== CONTEXT.md ==="
+  cat "$PROJECT/CONTEXT.md"
+  echo "=== end CONTEXT.md ==="
+fi
 # Never fail hooks due to stderr/exit behavior.
 exit 0
 PRIMEEOF

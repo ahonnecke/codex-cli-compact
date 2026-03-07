@@ -35,8 +35,17 @@ echo "[install] Using $($PYTHON --version)"
 echo "[install] Checking license..."
 
 LICENSE_KEY="${DG_LICENSE_KEY:-}"
-MACHINE_ID=$("$PYTHON" -c "import uuid; print(uuid.getnode())" 2>/dev/null || echo "unknown")
 PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
+if [[ "$PLATFORM" == "darwin" ]]; then
+  MACHINE_ID="$(ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null | awk -F'"' '/IOPlatformUUID/{print $4}')"
+elif [[ -f /etc/machine-id ]]; then
+  MACHINE_ID="$(cat /etc/machine-id)"
+elif [[ -f /var/lib/dbus/machine-id ]]; then
+  MACHINE_ID="$(cat /var/lib/dbus/machine-id)"
+fi
+if [[ -z "${MACHINE_ID:-}" ]]; then
+  MACHINE_ID=$("$PYTHON" -c "import uuid; print(uuid.getnode())" 2>/dev/null || echo "unknown")
+fi
 
 # ── Collect user info (skip if already provided via env vars) ─────────────────
 if [[ -z "${DG_NAME:-}" && -z "${DG_EMAIL:-}" ]]; then

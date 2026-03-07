@@ -22,7 +22,11 @@ for py in python3.13 python3.12 python3.11 python3.10 python3; do
 done
 if [[ -z "$PYTHON" ]]; then
   echo "[install] Error: Python 3.10+ required."
-  echo "[install] Install it with: brew install python@3.11"
+  case "$(uname -s)" in
+    Linux*)  echo "[install] Install it with: sudo apt install python3.11 python3.11-venv" ;;
+    Darwin*) echo "[install] Install it with: brew install python@3.11" ;;
+    *)       echo "[install] Install Python 3.10+ from https://python.org" ;;
+  esac
   exit 1
 fi
 echo "[install] Using $($PYTHON --version)"
@@ -36,13 +40,15 @@ PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
 
 # ── Collect user info (skip if already provided via env vars) ─────────────────
 if [[ -z "${DG_NAME:-}" && -z "${DG_EMAIL:-}" ]]; then
-  echo ""
-  echo "[install] Quick registration (helps us send updates & support)"
-  printf "  Name  (optional): " > /dev/tty
-  read -r DG_NAME < /dev/tty || DG_NAME=""
-  printf "  Email (optional): " > /dev/tty
-  read -r DG_EMAIL < /dev/tty || DG_EMAIL=""
-  echo ""
+  if [[ -t 0 ]] && [[ -e /dev/tty ]]; then
+    echo ""
+    echo "[install] Quick registration (helps us send updates & support)"
+    printf "  Name  (optional): " > /dev/tty
+    read -r DG_NAME < /dev/tty || DG_NAME=""
+    printf "  Email (optional): " > /dev/tty
+    read -r DG_EMAIL < /dev/tty || DG_EMAIL=""
+    echo ""
+  fi
 fi
 DG_NAME="${DG_NAME:-}"
 DG_EMAIL="${DG_EMAIL:-}"

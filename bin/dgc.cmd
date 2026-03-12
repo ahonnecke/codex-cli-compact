@@ -160,18 +160,21 @@ if "%NEED_WRITE%"=="1" (
 :: ── Scan project ───────────────────────────────────────────────────────────
 if not exist "%DATA_DIR%" mkdir "%DATA_DIR%"
 if not exist "%DATA_DIR%\context-store.json" echo []> "%DATA_DIR%\context-store.json"
+set "SCAN_ERR_LOG=%DATA_DIR%\scan_error.log"
+if exist "%SCAN_ERR_LOG%" del "%SCAN_ERR_LOG%" >nul 2>&1
 echo [%TOOL%] Scanning project...
-"%PYTHON%" "%DG%\graph_builder.py" --root "%PROJECT%" --out "%DATA_DIR%\info_graph.json"
+"%PYTHON%" "%DG%\graph_builder.py" --root "%PROJECT%" --out "%DATA_DIR%\info_graph.json" 2> "%SCAN_ERR_LOG%"
 if errorlevel 1 (
     echo [%TOOL%] Error: project scan failed.
     
     :: Attempt to send error telemetry
-    powershell -NoProfile -Command "try { $id='%COMPUTERNAME%'; $f='%DG%\identity.json'; if (Test-Path $f) { $mid=(Get-Content $f -Raw | ConvertFrom-Json).machine_id; if ($mid) { $id=$mid } }; Invoke-RestMethod -Method Post -Uri 'https://script.google.com/macros/s/AKfycbyq_5igbBUORhSqMNktAoX2GQg8BadKcYZOTV-XRUr3vbY3QuK7jjS8EWLg_pZyMDuD/exec' -ContentType 'application/json' -Body ('{\"type\":\"cli_error\",\"platform\":\"windows\",\"machine_id\":\"'+$id+'\",\"error_message\":\"Project scan failed in dgc.cmd\",\"script_step\":\"Scanning project\"}') -EA 0 -TimeoutSec 5 | Out-Null } catch {}" >nul 2>&1
+    powershell -NoProfile -Command "try { $id='%COMPUTERNAME%'; $f='%DG%\identity.json'; if (Test-Path $f) { $mid=(Get-Content $f -Raw | ConvertFrom-Json).machine_id; if ($mid) { $id=$mid } }; $tail=''; if (Test-Path '%SCAN_ERR_LOG%') { $tail=((Get-Content '%SCAN_ERR_LOG%' -Tail 20 -EA 0) -join ' '); $tail=$tail -replace '\s+',' '; if ($tail.Length -gt 700) { $tail=$tail.Substring(0,700) } }; if (-not $tail) { $tail='no stderr captured' }; Invoke-RestMethod -Method Post -Uri '%WEBHOOK_URL%' -ContentType 'application/json' -Body ('{\"type\":\"cli_error\",\"platform\":\"windows\",\"machine_id\":\"'+$id+'\",\"error_message\":\"Project scan failed in dgc.cmd: '+$tail+'\",\"script_step\":\"Scanning project\"}') -EA 0 -TimeoutSec 5 | Out-Null } catch {}" >nul 2>&1
     
     echo [%TOOL%] If this keeps happening, reinstall with:
     echo [%TOOL%]   %REINSTALL_CMD%
     exit /b 1
 )
+if exist "%SCAN_ERR_LOG%" del "%SCAN_ERR_LOG%" >nul 2>&1
 echo [%TOOL%] Scan complete.
 echo.
 

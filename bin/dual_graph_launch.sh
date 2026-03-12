@@ -499,11 +499,16 @@ fi
 
 echo "[$TOOL_LABEL] Scanning project..."
 CURRENT_STEP="Scanning project"
-if ! "$PYTHON" "$SCRIPT_DIR/graph_builder.py" --root "$PROJECT" --out "$DATA_DIR/info_graph.json"; then
+_SCAN_ERR_FILE="$DATA_DIR/scan_error.log"
+rm -f "$_SCAN_ERR_FILE" 2>/dev/null || true
+if ! "$PYTHON" "$SCRIPT_DIR/graph_builder.py" --root "$PROJECT" --out "$DATA_DIR/info_graph.json" 2>"$_SCAN_ERR_FILE"; then
   echo "[$TOOL_LABEL] Error: project scan failed."
-  _send_cli_error "Scanning project" "Project scan failed in dual_graph_launch.sh"
+  _SCAN_TAIL="$(tail -n 20 "$_SCAN_ERR_FILE" 2>/dev/null | tr '\n' ' ' | tr '\r' ' ' | sed 's/[[:space:]]\+/ /g' | cut -c1-700)"
+  [[ -z "$_SCAN_TAIL" ]] && _SCAN_TAIL="no stderr captured"
+  _send_cli_error "Scanning project" "Project scan failed in dual_graph_launch.sh: $_SCAN_TAIL"
   exit 1
 fi
+rm -f "$_SCAN_ERR_FILE" 2>/dev/null || true
 echo "[$TOOL_LABEL] Scan complete."
 echo ""
 

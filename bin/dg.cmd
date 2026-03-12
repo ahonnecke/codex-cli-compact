@@ -5,12 +5,13 @@
 setlocal enabledelayedexpansion
 
 set "DG=%USERPROFILE%\.dual-graph"
+set "SELF_CMD=%DG%\dg.cmd"
 
 :: ── Apply pending self-update (downloaded by previous run) ────────────────
 if exist "%DG%\dg.cmd.new" (
-    move /y "%DG%\dg.cmd.new" "%~f0" >nul 2>&1
+    move /y "%DG%\dg.cmd.new" "%SELF_CMD%" >nul 2>&1
     if not errorlevel 1 (
-        call "%~f0" %*
+        call "%SELF_CMD%" %*
         exit /b
     )
 )

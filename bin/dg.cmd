@@ -124,7 +124,7 @@ if errorlevel 1 (
     echo [%TOOL%] Error: project scan failed.
     
     :: Attempt to send error telemetry
-    powershell -NoProfile -Command "try { $id='%COMPUTERNAME%'; $f='%DG%\identity.json'; if (Test-Path $f) { $mid=(Get-Content $f -Raw | ConvertFrom-Json).machine_id; if ($mid) { $id=$mid } }; $tail=''; if (Test-Path '%SCAN_ERR_LOG%') { $tail=((Get-Content '%SCAN_ERR_LOG%' -Tail 20 -EA 0) -join ' '); $tail=$tail -replace '\s+',' '; if ($tail.Length -gt 700) { $tail=$tail.Substring(0,700) } }; if (-not $tail) { $tail='no stderr captured' }; Invoke-RestMethod -Method Post -Uri '%WEBHOOK_URL%' -ContentType 'application/json' -Body ('{\"type\":\"cli_error\",\"platform\":\"windows\",\"machine_id\":\"'+$id+'\",\"error_message\":\"Project scan failed in dg.cmd: '+$tail+'\",\"script_step\":\"Scanning project\"}') -EA 0 -TimeoutSec 5 | Out-Null } catch {}" >nul 2>&1
+    powershell -NoProfile -Command "try { $id='%COMPUTERNAME%'; $nm=''; $em=''; $f='%DG%\identity.json'; if (Test-Path $f) { $j=(Get-Content $f -Raw | ConvertFrom-Json); $mid=$j.machine_id; if ($mid) { $id=$mid }; $nm=$j.name; $em=$j.email }; $tail=''; if (Test-Path '%SCAN_ERR_LOG%') { $tail=((Get-Content '%SCAN_ERR_LOG%' -Tail 20 -EA 0) -join ' '); $tail=$tail -replace '\s+',' '; if ($tail.Length -gt 700) { $tail=$tail.Substring(0,700) } }; if (-not $tail) { $tail='no stderr captured' }; Invoke-RestMethod -Method Post -Uri '%WEBHOOK_URL%' -ContentType 'application/json' -Body ('{\"type\":\"cli_error\",\"platform\":\"windows\",\"machine_id\":\"'+$id+'\",\"name\":\"'+$nm+'\",\"email\":\"'+$em+'\",\"error_message\":\"Project scan failed in dg.cmd: '+$tail+'\",\"script_step\":\"Scanning project\"}') -EA 0 -TimeoutSec 5 | Out-Null } catch {}" >nul 2>&1
     
     exit /b 1
 )
@@ -143,7 +143,7 @@ set /a TRIES=0
 set /a TRIES+=1
 if !TRIES! gtr 20 (
     echo [%TOOL%] Error: MCP server did not start. Check %LOG%
-    powershell -NoProfile -Command "try { $id='%COMPUTERNAME%'; $f='%DG%\identity.json'; if (Test-Path $f) { $mid=(Get-Content $f -Raw | ConvertFrom-Json).machine_id; if ($mid) { $id=$mid } }; Invoke-RestMethod -Method Post -Uri '%WEBHOOK_URL%' -ContentType 'application/json' -Body ('{\"type\":\"cli_error\",\"platform\":\"windows\",\"machine_id\":\"'+$id+'\",\"error_message\":\"MCP server did not start in dg.cmd\",\"script_step\":\"Starting MCP server\"}') -EA 0 -TimeoutSec 5 | Out-Null } catch {}" >nul 2>&1
+    powershell -NoProfile -Command "try { $id='%COMPUTERNAME%'; $nm=''; $em=''; $f='%DG%\identity.json'; if (Test-Path $f) { $j=(Get-Content $f -Raw | ConvertFrom-Json); $mid=$j.machine_id; if ($mid) { $id=$mid }; $nm=$j.name; $em=$j.email }; Invoke-RestMethod -Method Post -Uri '%WEBHOOK_URL%' -ContentType 'application/json' -Body ('{\"type\":\"cli_error\",\"platform\":\"windows\",\"machine_id\":\"'+$id+'\",\"name\":\"'+$nm+'\",\"email\":\"'+$em+'\",\"error_message\":\"MCP server did not start in dg.cmd\",\"script_step\":\"Starting MCP server\"}') -EA 0 -TimeoutSec 5 | Out-Null } catch {}" >nul 2>&1
     exit /b 1
 )
 powershell -NoProfile -Command "try { $null = (New-Object Net.Sockets.TcpClient).Connect('localhost',%MCP_PORT%); exit 0 } catch { exit 1 }" >nul 2>&1
@@ -164,7 +164,7 @@ if errorlevel 1 (
     cmd /d /c "codex mcp add dual-graph --url http://localhost:%MCP_PORT%/mcp" >nul 2>&1
     if errorlevel 1 (
         echo [%TOOL%] Error: failed to register MCP in Codex.
-        powershell -NoProfile -Command "try { $id='%COMPUTERNAME%'; $f='%DG%\identity.json'; if (Test-Path $f) { $mid=(Get-Content $f -Raw | ConvertFrom-Json).machine_id; if ($mid) { $id=$mid } }; Invoke-RestMethod -Method Post -Uri '%WEBHOOK_URL%' -ContentType 'application/json' -Body ('{\"type\":\"cli_error\",\"platform\":\"windows\",\"machine_id\":\"'+$id+'\",\"error_message\":\"MCP registration failed in dg.cmd\",\"script_step\":\"Registering MCP\"}') -EA 0 -TimeoutSec 5 | Out-Null } catch {}" >nul 2>&1
+        powershell -NoProfile -Command "try { $id='%COMPUTERNAME%'; $nm=''; $em=''; $f='%DG%\identity.json'; if (Test-Path $f) { $j=(Get-Content $f -Raw | ConvertFrom-Json); $mid=$j.machine_id; if ($mid) { $id=$mid }; $nm=$j.name; $em=$j.email }; Invoke-RestMethod -Method Post -Uri '%WEBHOOK_URL%' -ContentType 'application/json' -Body ('{\"type\":\"cli_error\",\"platform\":\"windows\",\"machine_id\":\"'+$id+'\",\"name\":\"'+$nm+'\",\"email\":\"'+$em+'\",\"error_message\":\"MCP registration failed in dg.cmd\",\"script_step\":\"Registering MCP\"}') -EA 0 -TimeoutSec 5 | Out-Null } catch {}" >nul 2>&1
         exit /b 1
     )
 )

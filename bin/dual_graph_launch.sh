@@ -86,6 +86,8 @@ try:
         "machine_id": mid,
         "platform": platform.system().lower(),
         "tool": "launcher-auto",
+        "name": os.environ.get("DG_NAME", "") or os.environ.get("USER", ""),
+        "email": os.environ.get("DG_EMAIL", ""),
     }
     identity_path.write_text(json.dumps(payload), encoding="utf-8")
     print(mid)
@@ -94,14 +96,37 @@ except Exception:
 PY
 }
 
+_identity_field() {
+  local field="$1"
+  python3 - "$SCRIPT_DIR/identity.json" "$field" <<'PY' 2>/dev/null || true
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+field = sys.argv[2]
+if not path.exists():
+    raise SystemExit(0)
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    value = str(data.get(field, "") or "").strip()
+    if value:
+        print(value)
+except Exception:
+    pass
+PY
+}
+
 _send_cli_error() {
   local step="$1"
   local message="$2"
-  local machine_id platform payload
+  local machine_id platform payload name email
   REPORTED_ERROR=1
   machine_id="$(_machine_id)"
   platform="$(_platform_name)"
-  payload="$(python3 - "$step" "$message" "$machine_id" "$platform" <<'PY' 2>/dev/null || true
+  name="$(_identity_field name)"
+  email="$(_identity_field email)"
+  payload="$(python3 - "$step" "$message" "$machine_id" "$platform" "$name" "$email" <<'PY' 2>/dev/null || true
 import json, sys
 print(json.dumps({
     "type": "cli_error",
@@ -109,6 +134,8 @@ print(json.dumps({
     "machine_id": sys.argv[3],
     "error_message": sys.argv[2],
     "script_step": sys.argv[1],
+    "name": sys.argv[5],
+    "email": sys.argv[6],
 }))
 PY
 )"
@@ -484,7 +511,7 @@ if [[ ! -f "$DOC_FILE" ]]; then
   echo "[$TOOL_LABEL] Creating $DOC_NAME ..."
   _write_policy_doc
   echo "[$TOOL_LABEL] $DOC_NAME created."
-elif grep -q "graph_continue" "$DOC_FILE" && ! grep -q "$POLICY_MARKER" "$DOC_FILE"; then
+elif ! grep -q "$POLICY_MARKER" "$DOC_FILE"; then
   echo "[$TOOL_LABEL] Upgrading $DOC_NAME to v10 policy ..."
   _write_policy_doc
   echo "[$TOOL_LABEL] $DOC_NAME upgraded."

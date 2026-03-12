@@ -39,7 +39,7 @@ if "%~1"=="" (
 
 if not exist "%PROJECT%" (
     echo [%TOOL%] Error: path not found: %PROJECT%
-    powershell -NoProfile -Command "try { $id='%COMPUTERNAME%'; $f='%DG%\identity.json'; if (Test-Path $f) { $mid=(Get-Content $f -Raw | ConvertFrom-Json).machine_id; if ($mid) { $id=$mid } }; Invoke-RestMethod -Method Post -Uri '%WEBHOOK_URL%' -ContentType 'application/json' -Body ('{\"type\":\"cli_error\",\"platform\":\"windows\",\"machine_id\":\"'+$id+'\",\"error_message\":\"Project path not found in dgc.cmd\",\"script_step\":\"Resolving project path\"}') -EA 0 -TimeoutSec 5 | Out-Null } catch {}" >nul 2>&1
+    powershell -NoProfile -Command "try { $id='%COMPUTERNAME%'; $nm=''; $em=''; $f='%DG%\identity.json'; if (Test-Path $f) { $j=(Get-Content $f -Raw | ConvertFrom-Json); $mid=$j.machine_id; if ($mid) { $id=$mid }; $nm=$j.name; $em=$j.email }; Invoke-RestMethod -Method Post -Uri '%WEBHOOK_URL%' -ContentType 'application/json' -Body ('{\"type\":\"cli_error\",\"platform\":\"windows\",\"machine_id\":\"'+$id+'\",\"name\":\"'+$nm+'\",\"email\":\"'+$em+'\",\"error_message\":\"Project path not found in dgc.cmd\",\"script_step\":\"Resolving project path\"}') -EA 0 -TimeoutSec 5 | Out-Null } catch {}" >nul 2>&1
     exit /b 1
 )
 
@@ -114,7 +114,7 @@ if %errorlevel%==0 (
     set /a MCP_PORT+=1
     if !MCP_PORT! gtr 8099 (
         echo [%TOOL%] Error: no free port in range 8080-8099
-        powershell -NoProfile -Command "try { $id='%COMPUTERNAME%'; $f='%DG%\identity.json'; if (Test-Path $f) { $mid=(Get-Content $f -Raw | ConvertFrom-Json).machine_id; if ($mid) { $id=$mid } }; Invoke-RestMethod -Method Post -Uri '%WEBHOOK_URL%' -ContentType 'application/json' -Body ('{\"type\":\"cli_error\",\"platform\":\"windows\",\"machine_id\":\"'+$id+'\",\"error_message\":\"No free port found in dgc.cmd\",\"script_step\":\"Selecting MCP port\"}') -EA 0 -TimeoutSec 5 | Out-Null } catch {}" >nul 2>&1
+        powershell -NoProfile -Command "try { $id='%COMPUTERNAME%'; $nm=''; $em=''; $f='%DG%\identity.json'; if (Test-Path $f) { $j=(Get-Content $f -Raw | ConvertFrom-Json); $mid=$j.machine_id; if ($mid) { $id=$mid }; $nm=$j.name; $em=$j.email }; Invoke-RestMethod -Method Post -Uri '%WEBHOOK_URL%' -ContentType 'application/json' -Body ('{\"type\":\"cli_error\",\"platform\":\"windows\",\"machine_id\":\"'+$id+'\",\"name\":\"'+$nm+'\",\"email\":\"'+$em+'\",\"error_message\":\"No free port found in dgc.cmd\",\"script_step\":\"Selecting MCP port\"}') -EA 0 -TimeoutSec 5 | Out-Null } catch {}" >nul 2>&1
         exit /b 1
     )
     goto :find_port
@@ -138,11 +138,8 @@ if exist "%PROJECT%\.gitignore" (
 set "NEED_WRITE=0"
 if not exist "%DOC_FILE%" set "NEED_WRITE=1"
 if exist "%DOC_FILE%" (
-    findstr /C:"graph_continue" "%DOC_FILE%" >nul 2>&1
-    if not errorlevel 1 (
-        findstr /C:"%POLICY_MARKER%" "%DOC_FILE%" >nul 2>&1
-        if errorlevel 1 set "NEED_WRITE=1"
-    )
+    findstr /C:"%POLICY_MARKER%" "%DOC_FILE%" >nul 2>&1
+    if errorlevel 1 set "NEED_WRITE=1"
 )
 
 if "%NEED_WRITE%"=="1" (
@@ -168,7 +165,7 @@ if errorlevel 1 (
     echo [%TOOL%] Error: project scan failed.
     
     :: Attempt to send error telemetry
-    powershell -NoProfile -Command "try { $id='%COMPUTERNAME%'; $f='%DG%\identity.json'; if (Test-Path $f) { $mid=(Get-Content $f -Raw | ConvertFrom-Json).machine_id; if ($mid) { $id=$mid } }; $tail=''; if (Test-Path '%SCAN_ERR_LOG%') { $tail=((Get-Content '%SCAN_ERR_LOG%' -Tail 20 -EA 0) -join ' '); $tail=$tail -replace '\s+',' '; if ($tail.Length -gt 700) { $tail=$tail.Substring(0,700) } }; if (-not $tail) { $tail='no stderr captured' }; Invoke-RestMethod -Method Post -Uri '%WEBHOOK_URL%' -ContentType 'application/json' -Body ('{\"type\":\"cli_error\",\"platform\":\"windows\",\"machine_id\":\"'+$id+'\",\"error_message\":\"Project scan failed in dgc.cmd: '+$tail+'\",\"script_step\":\"Scanning project\"}') -EA 0 -TimeoutSec 5 | Out-Null } catch {}" >nul 2>&1
+    powershell -NoProfile -Command "try { $id='%COMPUTERNAME%'; $nm=''; $em=''; $f='%DG%\identity.json'; if (Test-Path $f) { $j=(Get-Content $f -Raw | ConvertFrom-Json); $mid=$j.machine_id; if ($mid) { $id=$mid }; $nm=$j.name; $em=$j.email }; $tail=''; if (Test-Path '%SCAN_ERR_LOG%') { $tail=((Get-Content '%SCAN_ERR_LOG%' -Tail 20 -EA 0) -join ' '); $tail=$tail -replace '\s+',' '; if ($tail.Length -gt 700) { $tail=$tail.Substring(0,700) } }; if (-not $tail) { $tail='no stderr captured' }; Invoke-RestMethod -Method Post -Uri '%WEBHOOK_URL%' -ContentType 'application/json' -Body ('{\"type\":\"cli_error\",\"platform\":\"windows\",\"machine_id\":\"'+$id+'\",\"name\":\"'+$nm+'\",\"email\":\"'+$em+'\",\"error_message\":\"Project scan failed in dgc.cmd: '+$tail+'\",\"script_step\":\"Scanning project\"}') -EA 0 -TimeoutSec 5 | Out-Null } catch {}" >nul 2>&1
     
     echo [%TOOL%] If this keeps happening, reinstall with:
     echo [%TOOL%]   %REINSTALL_CMD%
@@ -198,7 +195,7 @@ set /a TRIES=0
 set /a TRIES+=1
 if !TRIES! gtr 20 (
     echo [%TOOL%] Error: MCP server did not start. Check %LOG%
-    powershell -NoProfile -Command "try { $id='%COMPUTERNAME%'; $f='%DG%\identity.json'; if (Test-Path $f) { $mid=(Get-Content $f -Raw | ConvertFrom-Json).machine_id; if ($mid) { $id=$mid } }; Invoke-RestMethod -Method Post -Uri '%WEBHOOK_URL%' -ContentType 'application/json' -Body ('{\"type\":\"cli_error\",\"platform\":\"windows\",\"machine_id\":\"'+$id+'\",\"error_message\":\"MCP server did not start in dgc.cmd\",\"script_step\":\"Starting MCP server\"}') -EA 0 -TimeoutSec 5 | Out-Null } catch {}" >nul 2>&1
+    powershell -NoProfile -Command "try { $id='%COMPUTERNAME%'; $nm=''; $em=''; $f='%DG%\identity.json'; if (Test-Path $f) { $j=(Get-Content $f -Raw | ConvertFrom-Json); $mid=$j.machine_id; if ($mid) { $id=$mid }; $nm=$j.name; $em=$j.email }; Invoke-RestMethod -Method Post -Uri '%WEBHOOK_URL%' -ContentType 'application/json' -Body ('{\"type\":\"cli_error\",\"platform\":\"windows\",\"machine_id\":\"'+$id+'\",\"name\":\"'+$nm+'\",\"email\":\"'+$em+'\",\"error_message\":\"MCP server did not start in dgc.cmd\",\"script_step\":\"Starting MCP server\"}') -EA 0 -TimeoutSec 5 | Out-Null } catch {}" >nul 2>&1
     echo [%TOOL%] If this keeps happening, reinstall with:
     echo [%TOOL%]   %REINSTALL_CMD%
     exit /b 1
@@ -220,7 +217,7 @@ cmd /d /c "claude mcp remove dual-graph" >nul 2>&1
 cmd /d /c "claude mcp add --transport http dual-graph http://localhost:%MCP_PORT%/mcp" >nul 2>&1
 if errorlevel 1 (
     echo [%TOOL%] Error: failed to register MCP in Claude.
-    powershell -NoProfile -Command "try { $id='%COMPUTERNAME%'; $f='%DG%\identity.json'; if (Test-Path $f) { $mid=(Get-Content $f -Raw | ConvertFrom-Json).machine_id; if ($mid) { $id=$mid } }; Invoke-RestMethod -Method Post -Uri '%WEBHOOK_URL%' -ContentType 'application/json' -Body ('{\"type\":\"cli_error\",\"platform\":\"windows\",\"machine_id\":\"'+$id+'\",\"error_message\":\"MCP registration failed in dgc.cmd\",\"script_step\":\"Registering MCP\"}') -EA 0 -TimeoutSec 5 | Out-Null } catch {}" >nul 2>&1
+    powershell -NoProfile -Command "try { $id='%COMPUTERNAME%'; $nm=''; $em=''; $f='%DG%\identity.json'; if (Test-Path $f) { $j=(Get-Content $f -Raw | ConvertFrom-Json); $mid=$j.machine_id; if ($mid) { $id=$mid }; $nm=$j.name; $em=$j.email }; Invoke-RestMethod -Method Post -Uri '%WEBHOOK_URL%' -ContentType 'application/json' -Body ('{\"type\":\"cli_error\",\"platform\":\"windows\",\"machine_id\":\"'+$id+'\",\"name\":\"'+$nm+'\",\"email\":\"'+$em+'\",\"error_message\":\"MCP registration failed in dgc.cmd\",\"script_step\":\"Registering MCP\"}') -EA 0 -TimeoutSec 5 | Out-Null } catch {}" >nul 2>&1
     echo [%TOOL%] If this keeps happening, reinstall with:
     echo [%TOOL%]   %REINSTALL_CMD%
     exit /b 1
@@ -316,7 +313,7 @@ set "RUN_BAT=%TEMP%\dgc_run_%RANDOM%.bat"
 call "%RUN_BAT%"
 set "CLAUDE_EXIT=%ERRORLEVEL%"
 if not "%CLAUDE_EXIT%"=="0" (
-    powershell -NoProfile -Command "try { $id='%COMPUTERNAME%'; $f='%DG%\identity.json'; if (Test-Path $f) { $mid=(Get-Content $f -Raw | ConvertFrom-Json).machine_id; if ($mid) { $id=$mid } }; Invoke-RestMethod -Method Post -Uri '%WEBHOOK_URL%' -ContentType 'application/json' -Body ('{\"type\":\"cli_error\",\"platform\":\"windows\",\"machine_id\":\"'+$id+'\",\"error_message\":\"Claude exited with code %CLAUDE_EXIT% in dgc.cmd\",\"script_step\":\"Running Claude\"}') -EA 0 -TimeoutSec 5 | Out-Null } catch {}" >nul 2>&1
+    powershell -NoProfile -Command "try { $id='%COMPUTERNAME%'; $nm=''; $em=''; $f='%DG%\identity.json'; if (Test-Path $f) { $j=(Get-Content $f -Raw | ConvertFrom-Json); $mid=$j.machine_id; if ($mid) { $id=$mid }; $nm=$j.name; $em=$j.email }; Invoke-RestMethod -Method Post -Uri '%WEBHOOK_URL%' -ContentType 'application/json' -Body ('{\"type\":\"cli_error\",\"platform\":\"windows\",\"machine_id\":\"'+$id+'\",\"name\":\"'+$nm+'\",\"email\":\"'+$em+'\",\"error_message\":\"Claude exited with code %CLAUDE_EXIT% in dgc.cmd\",\"script_step\":\"Running Claude\"}') -EA 0 -TimeoutSec 5 | Out-Null } catch {}" >nul 2>&1
 )
 del "%RUN_BAT%" >nul 2>&1
 

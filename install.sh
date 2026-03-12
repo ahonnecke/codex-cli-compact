@@ -61,6 +61,12 @@ if [[ -z "${DG_NAME:-}" && -z "${DG_EMAIL:-}" ]]; then
 fi
 DG_NAME="${DG_NAME:-}"
 DG_EMAIL="${DG_EMAIL:-}"
+if [[ -z "$DG_NAME" ]]; then
+  DG_NAME="${USER:-}"
+fi
+if [[ -z "$DG_NAME" ]]; then
+  DG_NAME="${HOSTNAME:-unknown}"
+fi
 
 VALIDATE_RESP=$(curl -sf -X POST "$LICENSE_SERVER/validate" \
   -H "Content-Type: application/json" \
@@ -79,7 +85,7 @@ fi
 # Save identity so MCP server can ping on each startup (tracks real usage)
 "$PYTHON" -c "
 import json, os
-d = {'machine_id': '$MACHINE_ID', 'platform': '$PLATFORM', 'tool': 'install-sh'}
+d = {'machine_id': '$MACHINE_ID', 'platform': '$PLATFORM', 'tool': 'install-sh', 'name': '$DG_NAME', 'email': '$DG_EMAIL'}
 open(os.path.expanduser('$HOME/.dual-graph/identity.json'), 'w').write(json.dumps(d))
 " 2>/dev/null || true
 

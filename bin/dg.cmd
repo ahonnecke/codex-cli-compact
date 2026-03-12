@@ -6,6 +6,7 @@ setlocal enabledelayedexpansion
 
 set "DG=%USERPROFILE%\.dual-graph"
 set "SELF_CMD=%DG%\dg.cmd"
+set "LAUNCHER_BUILD=20260312b"
 
 :: ── Apply pending self-update (downloaded by previous run) ────────────────
 if exist "%DG%\dg.cmd.new" (
@@ -24,7 +25,14 @@ set "WEBHOOK_URL=https://script.google.com/macros/s/AKfycbyq_5igbBUORhSqMNktAoX2
 
 :: ── Update check + one-time install hint per version ────────────────────────
 set "LOCAL_VER=0"
+set "LOCAL_BUILD="
 if exist "%DG%\version.txt" set /p LOCAL_VER=<"%DG%\version.txt"
+for /f "tokens=2 delims==" %%A in ('findstr /B /C:"set \"LAUNCHER_BUILD=" "%SELF_CMD%" 2^>nul') do (
+    set "LOCAL_BUILD=%%~A"
+)
+if defined LOCAL_BUILD (
+    set "LOCAL_BUILD=!LOCAL_BUILD:"=!"
+)
 powershell -NoProfile -Command ^
   "try { $v=(Invoke-WebRequest '%BASE_URL%/bin/version.txt' -UseBasicParsing -TimeoutSec 3).Content.Trim(); Write-Output $v } catch { try { $v=(Invoke-WebRequest '%R2%/version.txt' -UseBasicParsing -TimeoutSec 3).Content.Trim(); Write-Output $v } catch { Write-Output '' } }" ^
   > "%TEMP%\dg_remote_ver.txt" 2>nul
@@ -33,10 +41,14 @@ set /p REMOTE_VER=<"%TEMP%\dg_remote_ver.txt"
 if defined REMOTE_VER (
   if not "%REMOTE_VER%"=="" (
     set "SHOULD_UPDATE=0"
-    powershell -NoProfile -Command ^
-      "try { $lv=[version]('%LOCAL_VER%'.Trim()); $rv=[version]('%REMOTE_VER%'.Trim()); if ($rv -gt $lv) { '1' } else { '0' } } catch { '0' }" ^
-      > "%TEMP%\dg_should_update.txt" 2>nul
-    if exist "%TEMP%\dg_should_update.txt" set /p SHOULD_UPDATE=<"%TEMP%\dg_should_update.txt"
+    if not "!LOCAL_BUILD!"=="%LAUNCHER_BUILD%" (
+      set "SHOULD_UPDATE=1"
+    ) else (
+      powershell -NoProfile -Command ^
+        "try { $lv=[version]('%LOCAL_VER%'.Trim()); $rv=[version]('%REMOTE_VER%'.Trim()); if ($rv -gt $lv) { '1' } else { '0' } } catch { '0' }" ^
+        > "%TEMP%\dg_should_update.txt" 2>nul
+      if exist "%TEMP%\dg_should_update.txt" set /p SHOULD_UPDATE=<"%TEMP%\dg_should_update.txt"
+    )
     if "%SHOULD_UPDATE%"=="1" (
       set "LAST_NOTICE_VER="
       if exist "%NOTICE_FILE%" set /p LAST_NOTICE_VER=<"%NOTICE_FILE%"

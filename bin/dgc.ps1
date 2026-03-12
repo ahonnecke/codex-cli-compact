@@ -300,8 +300,8 @@ try {
         # Wrap entirely so token-counter failures never kill the main launcher.
         try {
             if (Has-ClaudeMcp "token-counter") {
-                [void](Invoke-NativeQuiet "claude" @("mcp", "remove", "token-counter", "--scope", "user"))
-                [void](Invoke-NativeQuiet "claude" @("mcp", "remove", "token-counter"))
+                try { [void](Invoke-NativeQuiet "claude" @("mcp", "remove", "token-counter", "--scope", "user")) } catch {}
+                try { [void](Invoke-NativeQuiet "claude" @("mcp", "remove", "token-counter")) } catch {}
             }
             $nodeCmd = (Get-Command node -ErrorAction SilentlyContinue).Source
             $npmCmd  = (Get-Command npm.cmd -ErrorAction SilentlyContinue).Source
@@ -353,21 +353,21 @@ try {
     $settingsFile = Join-Path $settingsDir "settings.local.json"
 
     @"
-$port = if (Test-Path '$portFile') { Get-Content '$portFile' } else { '$port' }
+`$port = if (Test-Path '$portFile') { Get-Content '$portFile' } else { '$port' }
 try {
-    $out = (Invoke-WebRequest "http://localhost:$port/prime" -UseBasicParsing -TimeoutSec 3).Content
-    if ($out) { Write-Output $out; Write-Error "[dual-graph] Context loaded (port $port)" }
+    `$out = (Invoke-WebRequest "http://localhost:`$port/prime" -UseBasicParsing -TimeoutSec 3).Content
+    if (`$out) { Write-Output `$out; Write-Error "[dual-graph] Context loaded (port `$port)" }
 } catch {
-    Write-Error "[dual-graph] MCP server not reachable on port $port -- run dgc to restart"
+    Write-Error "[dual-graph] MCP server not reachable on port `$port -- run dgc to restart"
 }
-$ctxFile = '$resolvedProject\CONTEXT.md'
-if (Test-Path $ctxFile) { Write-Output ""; Write-Output "=== CONTEXT.md ==="; Get-Content $ctxFile -Raw; Write-Output "=== end CONTEXT.md ===" }
-$storeFile = '$contextStore'
-if (Test-Path $storeFile) {
-    $cutoff = (Get-Date).AddDays(-7).ToString('yyyy-MM-dd')
+`$ctxFile = '$resolvedProject\CONTEXT.md'
+if (Test-Path `$ctxFile) { Write-Output ""; Write-Output "=== CONTEXT.md ==="; Get-Content `$ctxFile -Raw; Write-Output "=== end CONTEXT.md ===" }
+`$storeFile = '$contextStore'
+if (Test-Path `$storeFile) {
+    `$cutoff = (Get-Date).AddDays(-7).ToString('yyyy-MM-dd')
     try {
-        $entries = (Get-Content $storeFile -Raw | ConvertFrom-Json) | Where-Object { $_.date -ge $cutoff } | Select-Object -First 15
-        if ($entries) { Write-Output ""; Write-Output "=== Stored Context ==="; $entries | ForEach-Object { Write-Output ("[" + $_.type + "] " + $_.content) }; Write-Output "=== end Stored Context ===" }
+        `$entries = (Get-Content `$storeFile -Raw | ConvertFrom-Json) | Where-Object { `$_.date -ge `$cutoff } | Select-Object -First 15
+        if (`$entries) { Write-Output ""; Write-Output "=== Stored Context ==="; `$entries | ForEach-Object { Write-Output ("[" + `$_.type + "] " + `$_.content) }; Write-Output "=== end Stored Context ===" }
     } catch {}
 }
 "@ | Set-Content -Path $primePs1 -Encoding UTF8

@@ -334,7 +334,6 @@ if (Test-Path $storeFile) {
 }
 "@ | Set-Content -Path $primePs1 -Encoding UTF8
 
-    @"
 $stopTemplate = @'
 $input = [Console]::In.ReadToEnd()
 try { $transcript = ($input | ConvertFrom-Json).transcript_path } catch { $transcript = '' }

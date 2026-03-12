@@ -151,6 +151,8 @@ dgc C:\path\to\project
 
 PowerShell variants (`dgc.ps1`, `dg.ps1`) are also available.
 
+If you installed with Scoop and the package version lags behind GitHub, `dgc .` still refreshes the real launcher payload in `%USERPROFILE%\.dual-graph\`. If the Scoop shim itself needs repair, run `scoop update dual-graph`.
+
 ---
 
 ## MCP Tools Reference

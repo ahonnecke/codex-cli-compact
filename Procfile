@@ -1,1 +1,1 @@
-web: bash dashboard/start.sh
+web: /app/dual-graph-dashboard/dashboard/start.sh

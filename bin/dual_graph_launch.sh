@@ -70,6 +70,25 @@ PY
   fi
 }
 
+_version_gt() {
+  local remote="$1"
+  local local_ver="$2"
+  python3 - "$remote" "$local_ver" <<'PY' >/dev/null 2>&1
+import sys
+def parse(v: str):
+    parts = []
+    for p in (v or "").strip().split("."):
+        try:
+            parts.append(int(p))
+        except Exception:
+            parts.append(0)
+    while len(parts) < 4:
+        parts.append(0)
+    return tuple(parts[:4])
+raise SystemExit(0 if parse(sys.argv[1]) > parse(sys.argv[2]) else 1)
+PY
+}
+
 # ── Kill any stale MCP server for this project (frees its port before scanning) ─
 if [[ -f "$DATA_DIR/mcp_server.pid" ]]; then
   _OLD_PID="$(cat "$DATA_DIR/mcp_server.pid")"
@@ -112,10 +131,14 @@ fi
 _R2="https://pub-18426978d5a14bf4a60ddedd7d5b6dab.r2.dev"
 _BASE_URL="https://raw.githubusercontent.com/kunal12203/Codex-CLI-Compact/main"
 _LOCAL_VER="$(cat "$SCRIPT_DIR/version.txt" 2>/dev/null || echo "0")"
-_REMOTE_VER="$(curl -sf --max-time 3 "$_R2/version.txt" 2>/dev/null || echo "")"
+_REMOTE_VER="$(
+  curl -sf --max-time 3 "$_BASE_URL/bin/version.txt" 2>/dev/null \
+    || curl -sf --max-time 3 "$_R2/version.txt" 2>/dev/null \
+    || echo ""
+)"
 _NOTICE_FILE="$SCRIPT_DIR/last_update_notice.txt"
 
-if [[ -n "$_REMOTE_VER" && "$_REMOTE_VER" != "$_LOCAL_VER" ]]; then
+if [[ -n "$_REMOTE_VER" ]] && _version_gt "$_REMOTE_VER" "$_LOCAL_VER"; then
   _LAST_NOTICE_VER="$(cat "$_NOTICE_FILE" 2>/dev/null || echo "")"
   if [[ "$_LAST_NOTICE_VER" != "$_REMOTE_VER" ]]; then
     if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -128,17 +151,22 @@ if [[ -n "$_REMOTE_VER" && "$_REMOTE_VER" != "$_LOCAL_VER" ]]; then
     echo "$_REMOTE_VER" > "$_NOTICE_FILE" 2>/dev/null || true
   fi
   echo "[$TOOL_LABEL] Update available ($_LOCAL_VER → $_REMOTE_VER) — updating..."
-  curl -sSL "$_R2/mcp_graph_server.py"  -o "$SCRIPT_DIR/mcp_graph_server.py"
-  curl -sSL "$_R2/graph_builder.py"     -o "$SCRIPT_DIR/graph_builder.py"
-  curl -sSL "$_R2/dg.py"               -o "$SCRIPT_DIR/dg.py"
-  # Pull launcher from GitHub main so wrapper/hook hotfixes are not gated on R2 publish lag.
+  curl -sSL "$_BASE_URL/bin/mcp_graph_server.py" -o "$SCRIPT_DIR/mcp_graph_server.py" \
+    || curl -sSL "$_R2/mcp_graph_server.py" -o "$SCRIPT_DIR/mcp_graph_server.py"
+  curl -sSL "$_BASE_URL/bin/graph_builder.py" -o "$SCRIPT_DIR/graph_builder.py" \
+    || curl -sSL "$_R2/graph_builder.py" -o "$SCRIPT_DIR/graph_builder.py"
+  curl -sSL "$_BASE_URL/bin/dg.py" -o "$SCRIPT_DIR/dg.py" \
+    || curl -sSL "$_R2/dg.py" -o "$SCRIPT_DIR/dg.py"
   curl -sSL "$_BASE_URL/bin/dual_graph_launch.sh" -o "$SCRIPT_DIR/dual_graph_launch.sh" \
-    && chmod +x "$SCRIPT_DIR/dual_graph_launch.sh"
+    || curl -sSL "$_R2/dual_graph_launch.sh" -o "$SCRIPT_DIR/dual_graph_launch.sh"
+  chmod +x "$SCRIPT_DIR/dual_graph_launch.sh"
   echo "$_REMOTE_VER" > "$SCRIPT_DIR/version.txt"
   echo "[$TOOL_LABEL] Updated to $_REMOTE_VER. Restarting..."
   EXEC_ARGS=("$SCRIPT_DIR/dual_graph_launch.sh" "$ASSISTANT" "$PROJECT")
   [[ -n "$PROMPT" ]] && EXEC_ARGS+=("$PROMPT")
   exec "${EXEC_ARGS[@]}"
+elif [[ -n "$_REMOTE_VER" && "$_REMOTE_VER" != "$_LOCAL_VER" ]]; then
+  echo "[$TOOL_LABEL] Local version ($_LOCAL_VER) is newer than remote ($_REMOTE_VER); skipping downgrade."
 fi
 # ──────────────────────────────────────────────────────────────────────────────
 

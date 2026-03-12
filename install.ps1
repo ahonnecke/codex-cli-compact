@@ -63,6 +63,11 @@ try {
     Invoke-WebRequest "$BASE_URL/bin/dg.cmd"  -OutFile "$INSTALL_DIR\dg.cmd"  -UseBasicParsing
     Invoke-WebRequest "$BASE_URL/bin/dgc.ps1" -OutFile "$INSTALL_DIR\dgc.ps1" -UseBasicParsing
     Invoke-WebRequest "$BASE_URL/bin/dg.ps1"  -OutFile "$INSTALL_DIR\dg.ps1"  -UseBasicParsing
+    try {
+        Invoke-WebRequest "$BASE_URL/bin/version.txt" -OutFile "$INSTALL_DIR\version.txt" -UseBasicParsing
+    } catch {
+        try { Invoke-WebRequest "$R2/version.txt" -OutFile "$INSTALL_DIR\version.txt" -UseBasicParsing } catch {}
+    }
 
     # ── Find Python 3.11 (preferred) or fall back ─────────────────────────────────
     $step = "Locating Python"

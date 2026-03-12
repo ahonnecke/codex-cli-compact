@@ -25,13 +25,18 @@ set "WEBHOOK_URL=https://script.google.com/macros/s/AKfycbyq_5igbBUORhSqMNktAoX2
 set "LOCAL_VER=0"
 if exist "%DG%\version.txt" set /p LOCAL_VER=<"%DG%\version.txt"
 powershell -NoProfile -Command ^
-  "try { $v=(Invoke-WebRequest '%R2%/version.txt' -UseBasicParsing -TimeoutSec 3).Content.Trim(); Write-Output $v } catch { Write-Output '' }" ^
+  "try { $v=(Invoke-WebRequest '%BASE_URL%/bin/version.txt' -UseBasicParsing -TimeoutSec 3).Content.Trim(); Write-Output $v } catch { try { $v=(Invoke-WebRequest '%R2%/version.txt' -UseBasicParsing -TimeoutSec 3).Content.Trim(); Write-Output $v } catch { Write-Output '' } }" ^
   > "%TEMP%\dg_remote_ver.txt" 2>nul
 set /p REMOTE_VER=<"%TEMP%\dg_remote_ver.txt"
 
 if defined REMOTE_VER (
   if not "%REMOTE_VER%"=="" (
-    if not "%REMOTE_VER%"=="%LOCAL_VER%" (
+    set "SHOULD_UPDATE=0"
+    powershell -NoProfile -Command ^
+      "try { $lv=[version]('%LOCAL_VER%'.Trim()); $rv=[version]('%REMOTE_VER%'.Trim()); if ($rv -gt $lv) { '1' } else { '0' } } catch { '0' }" ^
+      > "%TEMP%\dg_should_update.txt" 2>nul
+    if exist "%TEMP%\dg_should_update.txt" set /p SHOULD_UPDATE=<"%TEMP%\dg_should_update.txt"
+    if "%SHOULD_UPDATE%"=="1" (
       set "LAST_NOTICE_VER="
       if exist "%NOTICE_FILE%" set /p LAST_NOTICE_VER=<"%NOTICE_FILE%"
       if not "%LAST_NOTICE_VER%"=="%REMOTE_VER%" (
@@ -41,15 +46,19 @@ if defined REMOTE_VER (
         echo %REMOTE_VER%> "%NOTICE_FILE%"
       )
       echo [%TOOL%] Update available: %LOCAL_VER% -^> %REMOTE_VER% ... updating
-      powershell -NoProfile -Command "Invoke-WebRequest '%R2%/mcp_graph_server.py' -OutFile '%DG%\mcp_graph_server.py' -UseBasicParsing"
-      powershell -NoProfile -Command "Invoke-WebRequest '%R2%/graph_builder.py' -OutFile '%DG%\graph_builder.py' -UseBasicParsing"
-      powershell -NoProfile -Command "Invoke-WebRequest '%R2%/dual_graph_launch.sh' -OutFile '%DG%\dual_graph_launch.sh' -UseBasicParsing"
+      powershell -NoProfile -Command "try { Invoke-WebRequest '%BASE_URL%/bin/mcp_graph_server.py' -OutFile '%DG%\mcp_graph_server.py' -UseBasicParsing } catch { Invoke-WebRequest '%R2%/mcp_graph_server.py' -OutFile '%DG%\mcp_graph_server.py' -UseBasicParsing }"
+      powershell -NoProfile -Command "try { Invoke-WebRequest '%BASE_URL%/bin/graph_builder.py' -OutFile '%DG%\graph_builder.py' -UseBasicParsing } catch { Invoke-WebRequest '%R2%/graph_builder.py' -OutFile '%DG%\graph_builder.py' -UseBasicParsing }"
+      powershell -NoProfile -Command "try { Invoke-WebRequest '%BASE_URL%/bin/dual_graph_launch.sh' -OutFile '%DG%\dual_graph_launch.sh' -UseBasicParsing } catch { Invoke-WebRequest '%R2%/dual_graph_launch.sh' -OutFile '%DG%\dual_graph_launch.sh' -UseBasicParsing }"
       powershell -NoProfile -Command "try { Invoke-WebRequest '%BASE_URL%/bin/dgc.cmd' -OutFile '%DG%\dgc.cmd.new' -UseBasicParsing } catch {}" >nul 2>&1
       powershell -NoProfile -Command "try { Invoke-WebRequest '%BASE_URL%/bin/dg.cmd' -OutFile '%DG%\dg.cmd.new' -UseBasicParsing } catch {}" >nul 2>&1
       powershell -NoProfile -Command "try { Invoke-WebRequest '%BASE_URL%/bin/dgc.ps1' -OutFile '%DG%\dgc.ps1' -UseBasicParsing } catch {}" >nul 2>&1
       powershell -NoProfile -Command "try { Invoke-WebRequest '%BASE_URL%/bin/dg.ps1' -OutFile '%DG%\dg.ps1' -UseBasicParsing } catch {}" >nul 2>&1
       echo %REMOTE_VER%> "%DG%\version.txt"
       echo [%TOOL%] Updated to %REMOTE_VER%. Launcher will refresh on next run.
+    ) else (
+      if not "%REMOTE_VER%"=="%LOCAL_VER%" (
+        echo [%TOOL%] Local version %LOCAL_VER% is newer than remote %REMOTE_VER%. Skipping downgrade.
+      )
     )
   )
 )

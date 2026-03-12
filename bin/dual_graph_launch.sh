@@ -532,7 +532,8 @@ echo "[$TOOL_LABEL] Waiting for MCP server..."
 CURRENT_STEP="Waiting for MCP server"
 _MCP_READY=0
 for i in $(seq 1 20); do
-  if nc -z localhost "$MCP_PORT" 2>/dev/null; then
+  if nc -z localhost "$MCP_PORT" 2>/dev/null || \
+     python3 -c "import socket,sys; s=socket.socket(); s.settimeout(0.5); sys.exit(0 if s.connect_ex(('127.0.0.1',$MCP_PORT))==0 else 1)" 2>/dev/null; then
     _MCP_READY=1
     break
   fi

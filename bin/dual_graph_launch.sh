@@ -666,6 +666,12 @@ else
   claude mcp remove dual-graph >/dev/null 2>&1 || true
   if ! claude mcp add --transport http dual-graph "http://localhost:$MCP_PORT/mcp" >/dev/null 2>&1; then
     echo "[$TOOL_LABEL] Error: failed to register MCP with claude."
+    echo "[$TOOL_LABEL] Try this:"
+    echo "[$TOOL_LABEL] 1. Update Claude Code CLI:"
+    echo "[$TOOL_LABEL]    npm install -g @anthropic-ai/claude-code"
+    echo "[$TOOL_LABEL] 2. Wait 5 minutes and run dgc again."
+    echo "[$TOOL_LABEL] 3. If it still fails, open an issue on GitHub or join Discord:"
+    echo "[$TOOL_LABEL]    https://discord.gg/rxgVVgCh"
     _send_cli_error "Registering MCP" "MCP registration failed in dual_graph_launch.sh (claude)"
     exit 1
   fi

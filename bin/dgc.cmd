@@ -247,8 +247,12 @@ cmd /d /c "claude mcp add --transport http dual-graph http://localhost:%MCP_PORT
 if errorlevel 1 (
     echo [%TOOL%] Error: failed to register MCP in Claude.
     powershell -NoProfile -Command "try { $id='%COMPUTERNAME%'; $f='%DG%\\identity.json'; if (Test-Path $f) { $mid=(Get-Content $f -Raw | ConvertFrom-Json).machine_id; if ($mid) { $id=$mid } }; Invoke-RestMethod -Method Post -Uri '%WEBHOOK_URL%' -ContentType 'application/json' -Body ('{\"type\":\"cli_error\",\"platform\":\"windows\",\"machine_id\":\"'+$id+'\",\"error_message\":\"MCP registration failed in dgc.cmd\",\"script_step\":\"Registering MCP\"}') -EA 0 -TimeoutSec 5 | Out-Null } catch {}" >nul 2>&1
-    echo [%TOOL%] If this keeps happening, reinstall with:
-    echo [%TOOL%]   %REINSTALL_CMD%
+    echo [%TOOL%] Try this:
+    echo [%TOOL%] 1. Update Claude Code CLI:
+    echo [%TOOL%]    npm install -g @anthropic-ai/claude-code
+    echo [%TOOL%] 2. Wait 5 minutes and run dgc again.
+    echo [%TOOL%] 3. If it still fails, open an issue on GitHub or join Discord:
+    echo [%TOOL%]    https://discord.gg/rxgVVgCh
     exit /b 1
 )
 echo [%TOOL%] MCP registered -^> http://localhost:%MCP_PORT%/mcp

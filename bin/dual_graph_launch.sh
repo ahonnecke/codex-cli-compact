@@ -671,12 +671,14 @@ STOPEOF
   PRIME_CMD="$DATA_DIR/prime.sh"
   # Write JSON via Python to avoid quoting/escaping issues in paths with spaces.
   "$PYTHON" - "$PROJECT/.claude/settings.local.json" "$PRIME_CMD" "$DATA_DIR/stop.sh" <<'PY'
-import json, sys
+import json, sys, platform
 settings_file = sys.argv[1]
 prime_cmd = sys.argv[2]
 stop_cmd = sys.argv[3]
-hook_cmd = f'/bin/bash "{prime_cmd}"'
-stop_hook_cmd = f'/bin/bash "{stop_cmd}"'
+# Use plain "bash" on Windows (Git Bash resolves it); /bin/bash on Unix
+bash = "bash" if platform.system() == "Windows" else "/bin/bash"
+hook_cmd = f'{bash} "{prime_cmd}"'
+stop_hook_cmd = f'{bash} "{stop_cmd}"'
 payload = {
     "hooks": {
         "SessionStart": [

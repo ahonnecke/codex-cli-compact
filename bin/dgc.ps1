@@ -484,6 +484,9 @@ if ($transcript -and (Test-Path $transcript)) {
     Write-Host ""
 
     Push-Location $resolvedProject
+    # Clear PORT so Claude and its MCP children (e.g. token-counter) don't inherit it.
+    # Without this, token-counter reads PORT=8080, enters HTTP mode, and crashes with EADDRINUSE.
+    Remove-Item Env:\PORT -ErrorAction SilentlyContinue
     $hasNativePref = Test-Path variable:PSNativeCommandUseErrorActionPreference
     if ($hasNativePref) { $prevNativePref = $PSNativeCommandUseErrorActionPreference; $global:PSNativeCommandUseErrorActionPreference = $false }
     try {

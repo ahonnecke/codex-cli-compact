@@ -203,6 +203,9 @@ class Handler(BaseHTTPRequestHandler):
         cache_create = int(body.get("cache_creation_input_tokens", 0))
         cache_read = int(body.get("cache_read_input_tokens", 0))
         raw_input = int(body.get("raw_input_tokens", 0))
+        # If raw_input_tokens not provided, derive from total - cache
+        if raw_input == 0 and input_tokens > 0:
+            raw_input = max(0, input_tokens - cache_create - cache_read)
 
         # Backwards compat: old format used prompt_tokens/completion_tokens
         if not input_tokens and not output_tokens:

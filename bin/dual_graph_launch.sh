@@ -592,35 +592,64 @@ exit 0
 PRIMEEOF
   chmod +x "$DATA_DIR/prime.sh"
 
-  # Write stop.sh — reads transcript, estimates tokens, POSTs to token counter
+  # Write stop.sh — reads transcript, sums real API usage, POSTs to token counter
   cat > "$DATA_DIR/stop.sh" << STOPEOF
 #!/usr/bin/env bash
 INPUT=\$(cat)
 TRANSCRIPT=\$(echo "\$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('transcript_path',''))" 2>/dev/null || echo "")
 if [[ -n "\$TRANSCRIPT" && -f "\$TRANSCRIPT" ]]; then
-  CHARS=\$(python3 - "\$TRANSCRIPT" 2>/dev/null << 'PYEOF'
+  USAGE=\$(python3 - "\$TRANSCRIPT" 2>/dev/null << 'PYEOF'
 import json, sys
-lines = open(sys.argv[1]).readlines()
-for line in reversed(lines):
-    try:
-        msg = json.loads(line)
-        if msg.get("type") == "assistant":
-            print(len(str(msg.get("message", {}).get("content", ""))))
-            break
-    except Exception:
-        pass
+input_tokens = cache_create = cache_read = output_tokens = 0
+model = ""
+with open(sys.argv[1]) as f:
+    for line in f:
+        try:
+            msg = json.loads(line)
+        except Exception:
+            continue
+        if msg.get("type") != "assistant":
+            continue
+        m = msg.get("message", {})
+        if not model:
+            model = m.get("model", "")
+        u = m.get("usage", {})
+        if not u:
+            continue
+        input_tokens += u.get("input_tokens", 0)
+        cache_create += u.get("cache_creation_input_tokens", 0)
+        cache_read += u.get("cache_read_input_tokens", 0)
+        output_tokens += u.get("output_tokens", 0)
+total_input = input_tokens + cache_create + cache_read
+if total_input > 0 or output_tokens > 0:
+    print(json.dumps({
+        "input_tokens": total_input,
+        "output_tokens": output_tokens,
+        "cache_creation_input_tokens": cache_create,
+        "cache_read_input_tokens": cache_read,
+        "raw_input_tokens": input_tokens,
+        "model": model or "claude-sonnet-4-6",
+        "description": "auto",
+        "project": "$PROJECT",
+    }))
 PYEOF
 )
-  OUT=\$(( \${CHARS:-0} / 4 ))
-  IN=\$(( OUT * 4 ))
-  PROJECT_PATH="$PROJECT"
-  PORT_FILE="\$HOME/.claude/token-counter/dashboard-port.txt"
-  DASH_PORT=8899
-  if [[ -f "\$PORT_FILE" ]]; then DASH_PORT=\$(cat "\$PORT_FILE"); fi
-  curl -sf -X POST "http://localhost:\$DASH_PORT/log" \
-    -H "Content-Type: application/json" \
-    -d "{\"input_tokens\":\$IN,\"output_tokens\":\$OUT,\"model\":\"claude-sonnet-4-6\",\"description\":\"auto\",\"project\":\"\$PROJECT_PATH\"}" \
-    >/dev/null 2>&1 || true
+  if [[ -n "\$USAGE" ]]; then
+    # POST to MCP graph server (always running, reliable)
+    MCP_PORT=\$(cat "$DATA_DIR/mcp_port" 2>/dev/null || echo "$MCP_PORT")
+    curl -sf -X POST "http://localhost:\$MCP_PORT/log" \
+      -H "Content-Type: application/json" \
+      -d "\$USAGE" \
+      >/dev/null 2>&1 || true
+    # Also POST to token-counter-mcp dashboard if available
+    PORT_FILE="\$HOME/.claude/token-counter/dashboard-port.txt"
+    DASH_PORT=8899
+    if [[ -f "\$PORT_FILE" ]]; then DASH_PORT=\$(cat "\$PORT_FILE"); fi
+    curl -sf -X POST "http://localhost:\$DASH_PORT/log" \
+      -H "Content-Type: application/json" \
+      -d "\$USAGE" \
+      >/dev/null 2>&1 || true
+  fi
 fi
 exit 0
 STOPEOF

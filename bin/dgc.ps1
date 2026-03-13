@@ -464,18 +464,47 @@ $hookInput = [Console]::In.ReadToEnd()
 try { $transcript = ($hookInput | ConvertFrom-Json).transcript_path } catch { $transcript = '' }
 if ($transcript -and (Test-Path $transcript)) {
     try {
-        $lines = Get-Content $transcript -Raw | ConvertFrom-Json -AsHashtable -ErrorAction SilentlyContinue
-        if (-not $lines) { $lines = (Get-Content $transcript) | ForEach-Object { $_ | ConvertFrom-Json -ErrorAction SilentlyContinue } | Where-Object { $_ } }
-        $last = ($lines | Where-Object { $_.type -eq 'assistant' }) | Select-Object -Last 1
-        $chars = ([string]($last.message.content)).Length
-        $out = [Math]::Max(1, [int]($chars / 4)); $in = $out * 4
-        $portFile = Join-Path $env:USERPROFILE ".claude\token-counter\dashboard-port.txt"
-        $dashPort = if (Test-Path $portFile) { (Get-Content $portFile -Raw).Trim() } else { "8899" }
-        Invoke-RestMethod -Method Post -Uri "http://localhost:$dashPort/log" -ContentType 'application/json' -Body ("{`"input_tokens`":$in,`"output_tokens`":$out,`"model`":`"claude-sonnet-4-6`",`"description`":`"auto`",`"project`":`"__PROJECT__`"}") -ErrorAction SilentlyContinue | Out-Null
+        $inputTk = 0; $cacheCreate = 0; $cacheRead = 0; $outputTk = 0; $model = ''
+        foreach ($line in (Get-Content $transcript)) {
+            try {
+                $msg = $line | ConvertFrom-Json -ErrorAction SilentlyContinue
+                if (-not $msg -or $msg.type -ne 'assistant') { continue }
+                $m = $msg.message
+                if (-not $model -and $m.model) { $model = $m.model }
+                $u = $m.usage
+                if (-not $u) { continue }
+                $inputTk   += [int]($u.input_tokens)
+                $cacheCreate += [int]($u.cache_creation_input_tokens)
+                $cacheRead += [int]($u.cache_read_input_tokens)
+                $outputTk  += [int]($u.output_tokens)
+            } catch { continue }
+        }
+        $totalInput = $inputTk + $cacheCreate + $cacheRead
+        if ($totalInput -gt 0 -or $outputTk -gt 0) {
+            if (-not $model) { $model = 'claude-sonnet-4-6' }
+            $body = @{
+                input_tokens = $totalInput
+                output_tokens = $outputTk
+                cache_creation_input_tokens = $cacheCreate
+                cache_read_input_tokens = $cacheRead
+                raw_input_tokens = $inputTk
+                model = $model
+                description = "auto"
+                project = "__PROJECT__"
+            } | ConvertTo-Json -Compress
+            # POST to MCP graph server (always running, reliable)
+            $mcpPortFile = Join-Path "__DATADIR__" "mcp_port"
+            $mcpPort = if (Test-Path $mcpPortFile) { (Get-Content $mcpPortFile -Raw).Trim() } else { "8080" }
+            Invoke-RestMethod -Method Post -Uri "http://localhost:$mcpPort/log" -ContentType 'application/json' -Body $body -ErrorAction SilentlyContinue | Out-Null
+            # Also POST to token-counter-mcp dashboard if available
+            $portFile = Join-Path $env:USERPROFILE ".claude\token-counter\dashboard-port.txt"
+            $dashPort = if (Test-Path $portFile) { (Get-Content $portFile -Raw).Trim() } else { "8899" }
+            Invoke-RestMethod -Method Post -Uri "http://localhost:$dashPort/log" -ContentType 'application/json' -Body $body -ErrorAction SilentlyContinue | Out-Null
+        }
     } catch {}
 }
 '@
-($stopTemplate.Replace("__PROJECT__", $resolvedProject)) | Set-Content -Path $stopPs1 -Encoding UTF8
+($stopTemplate.Replace("__PROJECT__", $resolvedProject).Replace("__DATADIR__", $DG)) | Set-Content -Path $stopPs1 -Encoding UTF8
 
     if (-not (Test-Path $settingsDir)) { New-Item -ItemType Directory -Force -Path $settingsDir | Out-Null }
     $primeCmd = 'powershell -NoProfile -File "' + (To-ForwardSlashes $primePs1) + '"'

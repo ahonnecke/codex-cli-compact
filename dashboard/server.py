@@ -93,7 +93,7 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/scan":
                 self.trigger_scan()
                 return
-            if parsed.path == "/api/token-event":
+            if parsed.path in ("/api/token-event", "/log"):
                 self.record_token_event()
                 return
             if parsed.path == "/api/tokenize":
@@ -195,41 +195,100 @@ class Handler(BaseHTTPRequestHandler):
         if body is None:
             self.send_error(HTTPStatus.BAD_REQUEST, "Invalid JSON")
             return
+
+        # Accept both old format (prompt_tokens/completion_tokens) and
+        # new format from Stop hook (input_tokens/output_tokens/cache breakdown).
+        input_tokens = int(body.get("input_tokens", 0))
+        output_tokens = int(body.get("output_tokens", 0))
+        cache_create = int(body.get("cache_creation_input_tokens", 0))
+        cache_read = int(body.get("cache_read_input_tokens", 0))
+        raw_input = int(body.get("raw_input_tokens", 0))
+
+        # Backwards compat: old format used prompt_tokens/completion_tokens
+        if not input_tokens and not output_tokens:
+            input_tokens = int(body.get("prompt_tokens", 0)) or int(body.get("prompt_chars", 0)) // 4
+            output_tokens = int(body.get("completion_tokens", 0))
+
+        total = input_tokens + output_tokens
+
+        # Cost calculation (Sonnet 4.6 pricing as default)
+        model = str(body.get("model", "unknown"))
+        is_opus = "opus" in model.lower()
+        # Pricing per token
+        if is_opus:
+            price_raw = 15.0 / 1_000_000
+            price_cc = 18.75 / 1_000_000
+            price_cr = 1.50 / 1_000_000
+            price_out = 75.0 / 1_000_000
+        else:  # sonnet / default
+            price_raw = 3.0 / 1_000_000
+            price_cc = 3.75 / 1_000_000
+            price_cr = 0.30 / 1_000_000
+            price_out = 15.0 / 1_000_000
+
+        cost_usd = (raw_input * price_raw) + (cache_create * price_cc) + (cache_read * price_cr) + (output_tokens * price_out)
+
         event = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "mode": body.get("mode", "unknown"),
-            "prompt_chars": int(body.get("prompt_chars", 0)),
-            "prompt_tokens": int(body.get("prompt_tokens", 0)),
-            "completion_tokens": int(body.get("completion_tokens", 0)),
-            "total_tokens": int(body.get("total_tokens", 0)),
-            "notes": str(body.get("notes", "")),
+            "model": model,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cache_creation_input_tokens": cache_create,
+            "cache_read_input_tokens": cache_read,
+            "raw_input_tokens": raw_input,
+            "total_tokens": total,
+            "cost_usd": round(cost_usd, 6),
+            "project": str(body.get("project", "")),
+            "description": str(body.get("description", body.get("notes", ""))),
+            "mode": str(body.get("mode", "session")),
         }
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         with TOKEN_LOG.open("a", encoding="utf-8") as f:
             f.write(json.dumps(event) + "\n")
-        self.write_json({"ok": True})
+        self.write_json({"ok": True, "cost_usd": event["cost_usd"], "total_tokens": total})
 
     def serve_token_summary(self) -> None:
-        events: list[dict] = []
-        if TOKEN_LOG.exists():
-            for line in TOKEN_LOG.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    events.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+        events = self._load_token_events()
 
-        total = sum(int(ev.get("total_tokens", 0)) for ev in events)
-        by_mode: dict[str, int] = {}
+        total_tokens = sum(int(ev.get("total_tokens", 0)) for ev in events)
+        total_input = sum(int(ev.get("input_tokens", 0)) for ev in events)
+        total_output = sum(int(ev.get("output_tokens", 0)) for ev in events)
+        total_cache_create = sum(int(ev.get("cache_creation_input_tokens", 0)) for ev in events)
+        total_cache_read = sum(int(ev.get("cache_read_input_tokens", 0)) for ev in events)
+        total_cost = sum(float(ev.get("cost_usd", 0)) for ev in events)
+
+        by_model: dict[str, dict] = {}
         for ev in events:
-            mode = str(ev.get("mode", "unknown"))
-            by_mode[mode] = by_mode.get(mode, 0) + int(ev.get("total_tokens", 0))
+            model = str(ev.get("model", ev.get("mode", "unknown")))
+            if model not in by_model:
+                by_model[model] = {"tokens": 0, "cost_usd": 0.0, "sessions": 0}
+            by_model[model]["tokens"] += int(ev.get("total_tokens", 0))
+            by_model[model]["cost_usd"] += float(ev.get("cost_usd", 0))
+            by_model[model]["sessions"] += 1
+
+        by_project: dict[str, dict] = {}
+        for ev in events:
+            proj = str(ev.get("project", "unknown"))
+            # Use just the folder name for display
+            proj_name = proj.rstrip("/").rsplit("/", 1)[-1] if "/" in proj else proj
+            if not proj_name:
+                proj_name = "unknown"
+            if proj_name not in by_project:
+                by_project[proj_name] = {"tokens": 0, "cost_usd": 0.0, "sessions": 0}
+            by_project[proj_name]["tokens"] += int(ev.get("total_tokens", 0))
+            by_project[proj_name]["cost_usd"] += float(ev.get("cost_usd", 0))
+            by_project[proj_name]["sessions"] += 1
 
         self.write_json({
             "event_count": len(events),
-            "total_tokens": total,
-            "by_mode": by_mode,
+            "total_tokens": total_tokens,
+            "total_input_tokens": total_input,
+            "total_output_tokens": total_output,
+            "total_cache_creation_tokens": total_cache_create,
+            "total_cache_read_tokens": total_cache_read,
+            "total_cost_usd": round(total_cost, 4),
+            "by_model": by_model,
+            "by_project": by_project,
             "recent": events[-30:],
         })
 
@@ -246,26 +305,35 @@ class Handler(BaseHTTPRequestHandler):
         return events
 
     def serve_token_dataset(self) -> None:
-        """GET /api/token-dataset — turn-by-turn token usage with cumulative totals."""
+        """GET /api/token-dataset — session-by-session token usage with cumulative totals."""
         events = self._load_token_events()
-        cumulative = 0
+        cum_tokens = 0
+        cum_cost = 0.0
         turns = []
         for i, ev in enumerate(events, start=1):
             total = int(ev.get("total_tokens", 0))
-            cumulative += total
+            cost = float(ev.get("cost_usd", 0))
+            cum_tokens += total
+            cum_cost += cost
             turns.append({
                 "turn": i,
                 "timestamp": ev.get("timestamp", ""),
-                "mode": ev.get("mode", "unknown"),
-                "prompt_tokens": int(ev.get("prompt_tokens", 0)),
-                "completion_tokens": int(ev.get("completion_tokens", 0)),
+                "model": ev.get("model", ev.get("mode", "unknown")),
+                "input_tokens": int(ev.get("input_tokens", 0)),
+                "output_tokens": int(ev.get("output_tokens", 0)),
+                "cache_creation_input_tokens": int(ev.get("cache_creation_input_tokens", 0)),
+                "cache_read_input_tokens": int(ev.get("cache_read_input_tokens", 0)),
                 "total_tokens": total,
-                "cumulative_tokens": cumulative,
-                "notes": ev.get("notes", ""),
+                "cost_usd": round(cost, 6),
+                "cumulative_tokens": cum_tokens,
+                "cumulative_cost_usd": round(cum_cost, 4),
+                "project": ev.get("project", ""),
+                "description": ev.get("description", ev.get("notes", "")),
             })
         self.write_json({
             "turn_count": len(turns),
-            "total_tokens": cumulative,
+            "total_tokens": cum_tokens,
+            "total_cost_usd": round(cum_cost, 4),
             "turns": turns,
         })
 

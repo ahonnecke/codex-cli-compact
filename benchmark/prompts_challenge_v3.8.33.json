@@ -1,0 +1,52 @@
+[
+  {
+    "id": 201,
+    "category": "deep_trace",
+    "prompt": "Trace the complete lifecycle of a platform order from the moment a customer taps 'Place Order' to when the restaurant marks it 'Delivered'. For each step, name the exact file, function, line range, HTTP endpoint or WebSocket event, and database model mutation. Include the payment flow, notification triggers, and wallet transaction creation."
+  },
+  {
+    "id": 202,
+    "category": "security_audit",
+    "prompt": "Perform a security audit of this codebase. Identify all authentication bypass risks, missing authorization checks on API endpoints, SQL injection vectors, exposed secrets in config files, and CORS misconfigurations. For each finding, provide the exact file path, line number, vulnerable code snippet, and a specific fix."
+  },
+  {
+    "id": 203,
+    "category": "cross_system",
+    "prompt": "Map every interaction between the three frontends (restaurant-portal, customer-portal, admin-portal) and the backend. For each frontend, list every API call it makes, the corresponding backend endpoint file and function, the database models touched, and any WebSocket events. Identify any API endpoints that exist in the backend but are not called by any frontend."
+  },
+  {
+    "id": 204,
+    "category": "performance",
+    "prompt": "Identify all N+1 query patterns, missing database indexes, unoptimized bulk operations, and potential memory leaks in the backend Python code. For each issue, show the exact code path (file, function, line), explain why it's a problem, estimate the performance impact, and provide an optimized code snippet."
+  },
+  {
+    "id": 205,
+    "category": "migration_design",
+    "prompt": "Design a migration to add multi-tenant support where a single admin can manage multiple restaurants. Identify every file that assumes single-restaurant context (hardcoded restaurant_id from auth token), list all database schema changes needed, show the exact API endpoint modifications required, and provide the SQLAlchemy migration script."
+  },
+  {
+    "id": 206,
+    "category": "error_handling",
+    "prompt": "Audit all error handling in the backend. Find: (1) bare except clauses that swallow errors silently, (2) API endpoints that return 500 instead of proper error codes, (3) missing try/catch around database operations, (4) frontend API calls with no error handling. For each, provide file path, line number, the problematic code, and the corrected version."
+  },
+  {
+    "id": 207,
+    "category": "state_management",
+    "prompt": "Analyze the state management architecture across all three frontends. For each frontend: identify the state management approach (zustand/context/local), list all stores/contexts, map which components consume which state, find any prop drilling anti-patterns, and identify state that should be shared but is duplicated. Provide specific file paths and component names."
+  },
+  {
+    "id": 208,
+    "category": "testing_strategy",
+    "prompt": "Design a comprehensive test suite for the most critical user flows. Identify the top 5 highest-risk code paths (order placement, payment, auth, admin analytics, WebSocket), write specific test cases for each with exact function signatures, mock requirements, edge cases, and expected assertions. Reference the actual source code functions being tested."
+  },
+  {
+    "id": 209,
+    "category": "dependency_map",
+    "prompt": "Build a complete dependency map of the backend. For each Python file in backend/app/: list its imports (internal and external), which files import it, the database models it uses, the API routes it defines, and any circular dependency risks. Identify the most coupled modules and suggest a decoupling strategy with specific refactoring steps."
+  },
+  {
+    "id": 210,
+    "category": "full_stack_debug",
+    "prompt": "A customer reports: 'I placed an order, got charged, but the restaurant never received it.' Trace every possible failure point in the order flow from frontend submission through backend processing to restaurant notification. For each failure point, identify the exact code location, what could go wrong, how to detect it from logs, and the fix. Cover: API call failure, database transaction rollback, WebSocket disconnect, notification service failure."
+  }
+]

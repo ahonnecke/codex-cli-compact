@@ -174,19 +174,27 @@ else
   CURRENT_STEP="Selecting port"
   MCP_PORT=8080
   _port_in_use() {
-    # lsof (macOS, most Linux) → ss (Linux without lsof) → python socket fallback
-    if command -v lsof &>/dev/null; then
-      lsof -ti :"$1" >/dev/null 2>&1
-    elif command -v ss &>/dev/null; then
-      ss -tlnH "sport = :$1" 2>/dev/null | grep -q .
+    # Try to actually bind to 0.0.0.0:port (matches server bind address)
+    if python3 -c "
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    s.bind(('0.0.0.0', int(sys.argv[1])))
+    s.close()
+    sys.exit(1)  # port is FREE
+except OSError:
+    sys.exit(0)  # port is IN USE
+" "$1" 2>/dev/null; then
+      return 0  # in use
     else
-      python3 -c "import socket,sys; s=socket.socket(); s.settimeout(0.3); sys.exit(0 if s.connect_ex(('127.0.0.1',int(sys.argv[1])))==0 else 1)" "$1" 2>/dev/null
+      return 1  # free
     fi
   }
   while _port_in_use "$MCP_PORT"; do
     MCP_PORT=$((MCP_PORT + 1))
-    if [[ $MCP_PORT -gt 8099 ]]; then
-      echo "[$TOOL_LABEL] Error: no free port found in range 8080-8099" >&2
+    if [[ $MCP_PORT -gt 8199 ]]; then
+      echo "[$TOOL_LABEL] Error: no free port found in range 8080-8199" >&2
       exit 1
     fi
   done

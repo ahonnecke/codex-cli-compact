@@ -73,15 +73,15 @@ function Download-File([string]$Primary, [string]$Fallback, [string]$OutFile) {
 }
 
 function Get-FreePort {
-    for ($port = 8080; $port -le 8099; $port++) {
+    for ($port = 8080; $port -le 8199; $port++) {
         try {
-            $listener = [System.Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $port)
+            $listener = [System.Net.Sockets.TcpListener]::new([Net.IPAddress]::Any, $port)
             $listener.Start()
             $listener.Stop()
             return $port
         } catch {}
     }
-    throw "no free port in range 8080-8099"
+    throw "no free port in range 8080-8199"
 }
 
 function Wait-Port([int]$Port, [int]$Tries = 20) {

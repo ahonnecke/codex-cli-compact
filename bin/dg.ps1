@@ -366,12 +366,18 @@ try {
     Write-Host "[$Tool] MCP server ready on port $port."
     Write-Host ""
 
-    # Register MCP with Codex CLI
+    # Register MCP with Codex CLI (stdio bridge via mcp-remote)
+    # Codex CLI only supports stdio MCP servers, so we use mcp-remote to bridge HTTP->stdio
     Invoke-NativeQuiet "codex" @("mcp", "remove", "dual-graph") | Out-Null
-    $mcpAddExit = Invoke-NativeQuiet "codex" @("mcp", "add", "dual-graph", "http://localhost:$port/mcp")
-    if ($mcpAddExit -ne 0) {
-        $mcpAddExit = Invoke-NativeQuiet "codex" @("mcp", "add", "--url", "http://localhost:$port/mcp", "dual-graph")
+    $npxCmd = (Get-Command npx.cmd -ErrorAction SilentlyContinue).Source
+    if (-not $npxCmd) { $npxCmd = (Get-Command npx -ErrorAction SilentlyContinue).Source }
+    if (-not $npxCmd) {
+        Stop-McpServer $pidFile $portFile
+        Send-CliError "Registering MCP" "npx not found — needed for mcp-remote bridge"
+        Write-Host "[$Tool] Error: npx not found. Install Node.js from https://nodejs.org"
+        exit 1
     }
+    $mcpAddExit = Invoke-NativeQuiet "codex" @("mcp", "add", "dual-graph", "--", $npxCmd, "mcp-remote", "http://localhost:$port/mcp")
     if ($mcpAddExit -ne 0) {
         Stop-McpServer $pidFile $portFile
         Send-CliError "Registering MCP" "MCP registration failed in dg.ps1"
@@ -380,7 +386,7 @@ try {
         Write-Host "[$Tool] Join Discord for help: https://discord.gg/rxgVVgCh"
         exit 1
     }
-    Write-Host "[$Tool] MCP registered -> http://localhost:$port/mcp"
+    Write-Host "[$Tool] MCP registered -> http://localhost:$port/mcp (via mcp-remote)"
 
     Write-Host ""
     Write-Host "[$Tool] Questions, bugs, or feedback? Join the community:"

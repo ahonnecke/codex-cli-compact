@@ -918,10 +918,9 @@ fi
 if [[ "$ASSISTANT" == "codex" ]]; then
   CURRENT_STEP="Registering MCP"
   codex mcp remove dual-graph >/dev/null 2>&1 || true
-  if codex mcp add --transport http dual-graph "http://localhost:$MCP_PORT/mcp" >/dev/null 2>&1; then
-    echo "[$TOOL_LABEL] MCP config updated -> http://localhost:$MCP_PORT/mcp"
-  elif codex mcp add dual-graph --url "http://localhost:$MCP_PORT/mcp" >/dev/null 2>&1; then
-    echo "[$TOOL_LABEL] MCP config updated -> http://localhost:$MCP_PORT/mcp"
+  # Codex CLI only supports stdio MCP — use mcp-remote to bridge HTTP->stdio
+  if codex mcp add dual-graph -- npx mcp-remote "http://localhost:$MCP_PORT/mcp" >/dev/null 2>&1; then
+    echo "[$TOOL_LABEL] MCP config updated -> http://localhost:$MCP_PORT/mcp (via mcp-remote)"
   else
     echo "[$TOOL_LABEL] Error: failed to register MCP with codex."
     _send_cli_error "Registering MCP" "MCP registration failed in dual_graph_launch.sh (codex)"

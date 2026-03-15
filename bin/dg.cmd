@@ -116,18 +116,18 @@ if exist "%DATA_DIR%\mcp_port" (
 )
 del "%DATA_DIR%\mcp_server.log" >nul 2>&1
 
-:: ── Find a free port (8080-8099) ──────────────────────────────────────────
+:: ── Find a free port (8080-8199) ──────────────────────────────────────────
 if defined DG_MCP_PORT (
     set "MCP_PORT=%DG_MCP_PORT%"
     goto :port_found
 )
 set "MCP_PORT=8080"
 :find_port
-netstat -an 2>nul | findstr /C:":%MCP_PORT% " | findstr "LISTENING" >nul 2>&1
+powershell -NoProfile -Command "try { $l=[System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Any,%MCP_PORT%); $l.Start(); $l.Stop(); exit 1 } catch { exit 0 }" >nul 2>&1
 if %errorlevel%==0 (
     set /a MCP_PORT+=1
-    if !MCP_PORT! gtr 8099 (
-        echo [%TOOL%] Error: no free port in range 8080-8099
+    if !MCP_PORT! gtr 8199 (
+        echo [%TOOL%] Error: no free port in range 8080-8199
         exit /b 1
     )
     goto :find_port
@@ -169,7 +169,7 @@ echo.
 :: ── Start MCP server in background ────────────────────────────────────────
 echo [%TOOL%] Starting MCP server on port %MCP_PORT%...
 set "LOG=%DATA_DIR%\mcp_server.log"
-start /b "" cmd /c "set DG_DATA_DIR=%DATA_DIR%& set DUAL_GRAPH_PROJECT_ROOT=%PROJECT%& set DG_BASE_URL=http://localhost:%MCP_PORT%& set PORT=%MCP_PORT%& "%PYTHON%" "%DG%\mcp_graph_server.py" >> "%LOG%" 2>&1"
+start /b "" cmd /c "set DG_DATA_DIR=%DATA_DIR%& set DUAL_GRAPH_PROJECT_ROOT=%PROJECT%& set DG_BASE_URL=http://localhost:%MCP_PORT%& set DG_MCP_PORT=%MCP_PORT%& "%PYTHON%" "%DG%\mcp_graph_server.py" >> "%LOG%" 2>&1"
 
 :: ── Wait for server to be ready ────────────────────────────────────────────
 set /a TRIES=0

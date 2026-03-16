@@ -86,8 +86,12 @@ try {
         )
         $venvDir = Join-Path $InstallDir "venv"
         $venvPython = Join-Path $venvDir "Scripts\python.exe"
+        $venvCfg = Join-Path $venvDir "pyvenv.cfg"
 
-        if (Test-Path $venvPython) {
+        # Only probe the existing venv if it looks structurally complete.
+        # Checking pyvenv.cfg FIRST avoids running a broken python.exe
+        # (which would lock files and prevent cleanup on Windows).
+        if ((Test-Path $venvPython) -and (Test-Path $venvCfg)) {
             Invoke-Native { & $venvPython -m pip --version } | Out-Null
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "[install] Reusing existing Python venv..."
@@ -103,11 +107,19 @@ try {
             }
         }
 
-        # Remove any existing (broken or partial) venv before creating fresh
+        # Remove any existing (broken or partial) venv before creating fresh.
+        # Use rename-then-delete so locked files don't block the new venv.
         if (Test-Path $venvDir) {
             Write-Host "[install] Removing stale venv directory..."
-            if (-not (Remove-PathWithRetry $venvDir)) {
-                throw "Could not remove broken virtual environment at $venvDir. Close terminals or Python processes using ~/.dual-graph and retry."
+            $tombstone = "$venvDir._old_$(Get-Date -Format 'yyyyMMddHHmmss')"
+            try {
+                Rename-Item $venvDir $tombstone -Force -ErrorAction Stop
+                Remove-PathWithRetry $tombstone | Out-Null
+            } catch {
+                # Rename failed — try direct removal
+                if (-not (Remove-PathWithRetry $venvDir)) {
+                    Write-Host "[install] Cannot remove locked venv. Attempting to create over it with --clear..."
+                }
             }
         }
 
@@ -117,13 +129,17 @@ try {
 
         # Retry without --copies (some Windows installs don't support it)
         Write-Host "[install] Retrying venv creation without --copies..."
-        if (Test-Path $venvDir) { Remove-PathWithRetry $venvDir | Out-Null }
+        if (Test-Path $venvDir) {
+            try { Rename-Item $venvDir "$venvDir._old2" -Force -ErrorAction Stop; Remove-PathWithRetry "$venvDir._old2" | Out-Null } catch {}
+        }
         Invoke-Native { & $PythonExe -m venv $venvDir --clear }
         if ($LASTEXITCODE -eq 0 -and (Test-Path $venvPython)) { return }
 
         # Final retry: bare minimum
         Write-Host "[install] Retrying with bare venv creation..."
-        if (Test-Path $venvDir) { Remove-PathWithRetry $venvDir | Out-Null }
+        if (Test-Path $venvDir) {
+            try { Remove-Item $venvDir -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+        }
         Invoke-Native { & $PythonExe -m venv $venvDir }
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path $venvPython)) {
             throw "Failed to create Python virtual environment. Try manually: $PythonExe -m venv `"$venvDir`""

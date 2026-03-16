@@ -73,7 +73,6 @@ try {
         )
         $venvDir = Join-Path $InstallDir "venv"
         $venvPython = Join-Path $venvDir "Scripts\python.exe"
-        $venvLooksHealthy = $false
 
         if (Test-Path $venvPython) {
             & $venvPython -m pip --version > $null 2>&1
@@ -89,25 +88,32 @@ try {
                 Write-Host "[install] Repaired existing Python venv."
                 return
             }
+        }
 
-            Write-Host "[install] Existing venv is incomplete. Rebuilding it..."
+        # Remove any existing (broken or partial) venv before creating fresh
+        if (Test-Path $venvDir) {
+            Write-Host "[install] Removing stale venv directory..."
             if (-not (Remove-PathWithRetry $venvDir)) {
                 throw "Could not remove broken virtual environment at $venvDir. Close terminals or Python processes using ~/.dual-graph and retry."
             }
         }
 
         Write-Host "[install] Creating Python venv..."
-        & $PythonExe -m venv $venvDir --copies
+        & $PythonExe -m venv $venvDir --clear --copies 2>$null
         if ($LASTEXITCODE -eq 0 -and (Test-Path $venvPython)) { return }
 
-        Write-Host "[install] Fresh venv creation failed. Cleaning up partial environment and retrying..."
-        if (-not (Remove-PathWithRetry $venvDir)) {
-            throw "Could not remove locked virtual environment at $venvDir. Close terminals or Python processes using ~/.dual-graph and retry."
-        }
+        # Retry without --copies (some Windows installs don't support it)
+        Write-Host "[install] Retrying venv creation without --copies..."
+        if (Test-Path $venvDir) { Remove-PathWithRetry $venvDir | Out-Null }
+        & $PythonExe -m venv $venvDir --clear 2>$null
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $venvPython)) { return }
 
-        & $PythonExe -m venv $venvDir --copies
+        # Final retry: bare minimum
+        Write-Host "[install] Retrying with bare venv creation..."
+        if (Test-Path $venvDir) { Remove-PathWithRetry $venvDir | Out-Null }
+        & $PythonExe -m venv $venvDir
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path $venvPython)) {
-            throw "Failed to create Python virtual environment"
+            throw "Failed to create Python virtual environment. Try manually: $PythonExe -m venv `"$venvDir`""
         }
     }
 

@@ -192,10 +192,11 @@ function Create-Venv([string]$PyExe, [string]$VenvDir) {
         Remove-Item $VenvDir -Recurse -Force -ErrorAction SilentlyContinue
         return $false
     }
-    $exit = Invoke-NativeQuiet $PyExe @("-m", "venv", $VenvDir)
+    $exit = Invoke-NativeQuiet $PyExe @("-m", "venv", "--clear", $VenvDir)
     if ($exit -eq 0 -and (Test-Path (Join-Path $VenvDir "Scripts\python.exe"))) { return $true }
+    cmd /c "rmdir /s /q `"$VenvDir`"" 2>$null
     Remove-Item $VenvDir -Recurse -Force -ErrorAction SilentlyContinue
-    $exit = Invoke-NativeQuiet $PyExe @("-m", "venv", "--without-pip", $VenvDir)
+    $exit = Invoke-NativeQuiet $PyExe @("-m", "venv", "--clear", "--without-pip", $VenvDir)
     if ($exit -eq 0 -and (Test-Path (Join-Path $VenvDir "Scripts\python.exe"))) {
         try {
             Write-Host "[$Tool] Bootstrapping pip via get-pip.py..."
@@ -225,21 +226,32 @@ try {
     if ($needsVenv -and (Test-Path (Join-Path $DG "venv"))) {
         Write-Host "[$Tool] Broken venv detected (missing pyvenv.cfg). Rebuilding..."
         $oldVenv = Join-Path $DG "venv"
-        $tombstone = Join-Path $DG "venv._broken_$(Get-Date -Format 'yyyyMMddHHmmss')"
-        # Rename out of the way first — works even if .pyd files are locked
-        try { Rename-Item $oldVenv $tombstone -Force -ErrorAction Stop } catch {
-            # Rename failed too — try killing python processes from this venv
-            Get-Process python*, py* -ErrorAction SilentlyContinue |
-                Where-Object { try { $_.Path -like "$oldVenv*" } catch { $false } } |
-                Stop-Process -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 1
-            try { Rename-Item $oldVenv $tombstone -Force -ErrorAction Stop } catch {
-                cmd /c "rmdir /s /q `"$oldVenv`"" 2>$null
+
+        # Step 1: Kill any python.exe running from the venv (locks .pyd files)
+        Write-Host "[$Tool] Stopping stale Python processes..."
+        try {
+            Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+                Where-Object { $_.ExecutablePath -like "*\.dual-graph*" } |
+                ForEach-Object {
+                    Write-Host "[$Tool]   Killing PID $($_.ProcessId)..."
+                    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+                }
+        } catch {}
+        taskkill /f /fi "IMAGENAME eq python.exe" /fi "MODULES eq _pydantic_core*" 2>$null | Out-Null
+        Start-Sleep -Seconds 2
+
+        # Step 2: Try rmdir first (most reliable on Windows)
+        cmd /c "rmdir /s /q `"$oldVenv`"" 2>$null
+        if (Test-Path $oldVenv) {
+            # Step 3: Rename out of the way if rmdir failed
+            $tombstone = Join-Path $DG "venv._broken_$(Get-Date -Format 'yyyyMMddHHmmss')"
+            try {
+                Rename-Item $oldVenv $tombstone -Force -ErrorAction Stop
+                Start-Job -ScriptBlock { cmd /c "rmdir /s /q `"$using:tombstone`"" } -ErrorAction SilentlyContinue | Out-Null
+            } catch {
+                Remove-Item "$oldVenv\*" -Recurse -Force -ErrorAction SilentlyContinue
+                Write-Host "[$Tool] Warning: Could not fully remove old venv. Will overwrite with --clear."
             }
-        }
-        # Clean up tombstone in background (best effort)
-        if (Test-Path $tombstone) {
-            Start-Job -ScriptBlock { cmd /c "rmdir /s /q `"$using:tombstone`"" } -ErrorAction SilentlyContinue | Out-Null
         }
     }
     if ($needsVenv) {

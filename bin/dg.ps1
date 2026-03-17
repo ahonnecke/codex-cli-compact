@@ -220,6 +220,43 @@ function Create-Venv([string]$PyExe, [string]$VenvDir) {
 try {
     if (-not (Test-Path $DG)) { New-Item -ItemType Directory -Force -Path $DG | Out-Null }
 
+    # -- Self-update check (FIRST — before venv/graperoot so stuck users always escape) --
+    $localVer = "0"
+    $versionFile = Join-Path $DG "version.txt"
+    if (Test-Path $versionFile) { $localVer = (Get-Content $versionFile -Raw).Trim() }
+    $remoteVer = ""
+    try { $remoteVer = Get-Text "$BaseUrl/bin/version.txt" } catch {
+        try { $remoteVer = Get-Text "$R2/version.txt" } catch {}
+    }
+    if ($remoteVer) {
+        try {
+            if ([version]$remoteVer -gt [version]$localVer) {
+                if (-not (Test-Path $NoticeFile) -or ((Get-Content $NoticeFile -Raw).Trim() -ne $remoteVer)) {
+                    Write-Host "[$Tool] New version available: $localVer -> $remoteVer"
+                    Set-Content -Path $NoticeFile -Value $remoteVer -Encoding UTF8
+                }
+                Write-Host "[$Tool] Update available: $localVer -> $remoteVer ... updating"
+                $downloads = @(
+                    @{ Primary = "$BaseUrl/bin/mcp_graph_server.py"; Fallback = "$R2/mcp_graph_server.py"; Out = (Join-Path $DG "mcp_graph_server.py") },
+                    @{ Primary = "$BaseUrl/bin/graph_builder.py";    Fallback = "$R2/graph_builder.py";    Out = (Join-Path $DG "graph_builder.py") },
+                    @{ Primary = "$BaseUrl/bin/dual_graph_launch.sh";Fallback = "$R2/dual_graph_launch.sh";Out = (Join-Path $DG "dual_graph_launch.sh") },
+                    @{ Primary = "$BaseUrl/bin/dgc.ps1";             Fallback = "$R2/dgc.ps1";            Out = (Join-Path $DG "dgc.ps1") },
+                    @{ Primary = "$BaseUrl/bin/dg.ps1";              Fallback = "$R2/dg.ps1";             Out = (Join-Path $DG "dg.ps1") },
+                    @{ Primary = "$BaseUrl/bin/dgc.cmd";             Fallback = "$R2/dgc.cmd";            Out = (Join-Path $DG "dgc.cmd") },
+                    @{ Primary = "$BaseUrl/bin/dg.cmd";              Fallback = "$R2/dg.cmd";             Out = (Join-Path $DG "dg.cmd") }
+                )
+                foreach ($item in $downloads) { [void](Download-File $item.Primary $item.Fallback $item.Out) }
+                $dgPs1 = Join-Path $DG "dg.ps1"
+                if ((Test-Path $dgPs1) -and (Get-Item $dgPs1).Length -gt 1024) {
+                    [void](Download-File "$BaseUrl/bin/version.txt" "$R2/version.txt" (Join-Path $DG "version.txt"))
+                }
+                Write-Host "[$Tool] Updated to $remoteVer. Restarting..."
+                $updatedScript = Join-Path $DG "dg.ps1"
+                if (Test-Path $updatedScript) { & $updatedScript $ProjectPath; exit $LASTEXITCODE }
+            }
+        } catch {}
+    }
+
     # -- Bulletproof Python venv setup --
     $venvCfg = Join-Path $DG "venv\pyvenv.cfg"
     $needsVenv = (-not (Test-Path $Python)) -or (-not (Test-Path $venvCfg))
@@ -336,50 +373,6 @@ try {
 
     $DataDir = Join-Path $resolvedProject ".dual-graph"
     $Gitignore = Join-Path $resolvedProject ".gitignore"
-
-    $localVer = "0"
-    $versionFile = Join-Path $DG "version.txt"
-    if (Test-Path $versionFile) { $localVer = (Get-Content $versionFile -Raw).Trim() }
-
-    $remoteVer = ""
-    try { $remoteVer = Get-Text "$BaseUrl/bin/version.txt" } catch {
-        try { $remoteVer = Get-Text "$R2/version.txt" } catch {}
-    }
-
-    if ($remoteVer) {
-        try {
-            if ([version]$remoteVer -gt [version]$localVer) {
-                if (-not (Test-Path $NoticeFile) -or ((Get-Content $NoticeFile -Raw).Trim() -ne $remoteVer)) {
-                    Write-Host "[$Tool] New version available: $localVer -> $remoteVer"
-                    Set-Content -Path $NoticeFile -Value $remoteVer -Encoding UTF8
-                }
-                Write-Host "[$Tool] Update available: $localVer -> $remoteVer ... updating"
-
-                $downloads = @(
-                    @{ Primary = "$BaseUrl/bin/mcp_graph_server.py"; Fallback = "$R2/mcp_graph_server.py"; Out = (Join-Path $DG "mcp_graph_server.py") },
-                    @{ Primary = "$BaseUrl/bin/graph_builder.py";    Fallback = "$R2/graph_builder.py";    Out = (Join-Path $DG "graph_builder.py") },
-                    @{ Primary = "$BaseUrl/bin/dual_graph_launch.sh";Fallback = "$R2/dual_graph_launch.sh";Out = (Join-Path $DG "dual_graph_launch.sh") },
-                    @{ Primary = "$BaseUrl/bin/dgc.ps1";             Fallback = "$R2/dgc.ps1";            Out = (Join-Path $DG "dgc.ps1") },
-                    @{ Primary = "$BaseUrl/bin/dg.ps1";              Fallback = "$R2/dg.ps1";             Out = (Join-Path $DG "dg.ps1") },
-                    @{ Primary = "$BaseUrl/bin/dgc.cmd";             Fallback = "$R2/dgc.cmd";            Out = (Join-Path $DG "dgc.cmd") },
-                    @{ Primary = "$BaseUrl/bin/dg.cmd";              Fallback = "$R2/dg.cmd";             Out = (Join-Path $DG "dg.cmd") }
-                )
-                foreach ($item in $downloads) {
-                    [void](Download-File $item.Primary $item.Fallback $item.Out)
-                }
-                $dgPs1 = Join-Path $DG "dg.ps1"
-                if ((Test-Path $dgPs1) -and (Get-Item $dgPs1).Length -gt 1024) {
-                    [void](Download-File "$BaseUrl/bin/version.txt" "$R2/version.txt" (Join-Path $DG "version.txt"))
-                }
-                Write-Host "[$Tool] Updated to $remoteVer. Restarting..."
-                $updatedScript = Join-Path $DG "dg.ps1"
-                if (Test-Path $updatedScript) {
-                    & $updatedScript $ProjectPath
-                    exit $LASTEXITCODE
-                }
-            }
-        } catch {}
-    }
 
     if (Test-Path $Gitignore) {
         $content = Get-Content $Gitignore -ErrorAction SilentlyContinue

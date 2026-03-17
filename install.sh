@@ -279,25 +279,16 @@ print(files.get('$1', ''))
 " 2>/dev/null || echo ""
 }
 
-URL_MCP=$(get_url mcp_graph_server)
-URL_GRAPH=$(get_url graph_builder)
 URL_LAUNCH=$(get_url dual_graph_launch)
-URL_DG=$(get_url dg)
 
 # Fallback to Cloudflare R2 if server returned empty URLs
 R2="https://pub-18426978d5a14bf4a60ddedd7d5b6dab.r2.dev"
 BASE_URL="https://raw.githubusercontent.com/kunal12203/Codex-CLI-Compact/main"
-[[ -z "$URL_MCP"    ]] && URL_MCP="$R2/mcp_graph_server.py"
-[[ -z "$URL_GRAPH"  ]] && URL_GRAPH="$R2/graph_builder.py"
 [[ -z "$URL_LAUNCH" ]] && URL_LAUNCH="$R2/dual_graph_launch.sh"
-[[ -z "$URL_DG"     ]] && URL_DG="$R2/dg.py"
 
 # ── Download core engine ──────────────────────────────────────────────────────
 echo "[install] Downloading core engine..."
-curl -fsSL "$URL_MCP"    -o "$INSTALL_DIR/mcp_graph_server.py"
-curl -fsSL "$URL_GRAPH"  -o "$INSTALL_DIR/graph_builder.py"
 curl -fsSL "$URL_LAUNCH" -o "$INSTALL_DIR/dual_graph_launch.sh" && chmod +x "$INSTALL_DIR/dual_graph_launch.sh"
-curl -fsSL "$URL_DG"     -o "$INSTALL_DIR/dg.py"
 curl -sf  "$BASE_URL/bin/version.txt" -o "$INSTALL_DIR/version.txt" 2>/dev/null \
   || curl -sf "$R2/version.txt" -o "$INSTALL_DIR/version.txt" 2>/dev/null \
   || true
@@ -311,7 +302,7 @@ echo "[install] Creating Python venv at $VENV ..."
 
 echo "[install] Installing Python dependencies..."
 "$VENV/bin/pip" install --upgrade pip --quiet
-"$VENV/bin/pip" install "mcp>=1.3.0" uvicorn anyio starlette --quiet
+"$VENV/bin/pip" install "mcp>=1.3.0" uvicorn anyio starlette graperoot --quiet
 
 # Add to PATH if not already there
 SHELL_RC="$HOME/.zshrc"

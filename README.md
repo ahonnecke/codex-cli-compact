@@ -163,7 +163,7 @@ get_session_stats()                  # running session cost
 
 The launcher checks for updates on every run and auto-updates if a new version is available. No manual intervention needed.
 
-Current version: **3.8.56**
+Current version: **3.8.64**
 
 ---
 
@@ -175,6 +175,36 @@ Current version: **3.8.56**
   - **Heartbeat** — sends `machine_id` and `platform` only. No file names, no code.
   - **One-time feedback** — optional rating after first day of use.
 - `.dual-graph/` is automatically added to `.gitignore`.
+
+---
+
+## Uninstall
+
+**macOS / Linux:**
+```bash
+rm -rf ~/.dual-graph
+sed -i.bak '/\.dual-graph/d' ~/.zshrc ~/.bashrc 2>/dev/null
+rm -rf .dual-graph .claude/settings.local.json
+claude mcp remove token-counter --scope user 2>/dev/null
+claude mcp remove dual-graph 2>/dev/null
+rm -rf ~/.claude/token-counter
+rm -f ~/.claude/token-counter-stop.sh
+```
+
+**Windows (PowerShell):**
+```powershell
+Remove-Item "$env:USERPROFILE\.dual-graph" -Recurse -Force -ErrorAction SilentlyContinue
+$p = [Environment]::GetEnvironmentVariable("PATH","User") -split ";" | Where-Object { $_ -notlike "*\.dual-graph*" }
+[Environment]::SetEnvironmentVariable("PATH", ($p -join ";"), "User")
+Remove-Item ".dual-graph" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item ".claude\settings.local.json" -Force -ErrorAction SilentlyContinue
+claude mcp remove token-counter --scope user 2>$null
+claude mcp remove dual-graph 2>$null
+Remove-Item "$env:USERPROFILE\.claude\token-counter" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item "$env:USERPROFILE\.claude\token-counter-stop.ps1" -Force -ErrorAction SilentlyContinue
+```
+
+> The PATH/project commands remove the global install. Run the project-local commands inside each project you used dual-graph with.
 
 ---
 

@@ -386,19 +386,19 @@ _install_deps() {
 
   # Use uv pip if available (10x faster, no build issues)
   if command -v uv &>/dev/null; then
-    if uv pip install --python "$venv_dir/bin/python3" "mcp>=1.3.0" uvicorn anyio starlette 2>/dev/null; then
+    if uv pip install --python "$venv_dir/bin/python3" "mcp>=1.3.0" uvicorn anyio starlette graperoot 2>/dev/null; then
       return 0
     fi
   fi
 
   # Standard pip
-  if "$pip_cmd" install "mcp>=1.3.0" uvicorn anyio starlette --quiet 2>/tmp/dgc_pip_err.txt; then
+  if "$pip_cmd" install "mcp>=1.3.0" uvicorn anyio starlette graperoot --quiet 2>/tmp/dgc_pip_err.txt; then
     return 0
   fi
 
   # Retry without cache (fixes corrupted cache issues)
   echo "[$TOOL_LABEL] Retrying pip install with --no-cache-dir..."
-  if "$pip_cmd" install "mcp>=1.3.0" uvicorn anyio starlette --quiet --no-cache-dir 2>/tmp/dgc_pip_err.txt; then
+  if "$pip_cmd" install "mcp>=1.3.0" uvicorn anyio starlette graperoot --quiet --no-cache-dir 2>/tmp/dgc_pip_err.txt; then
     return 0
   fi
 
@@ -470,6 +470,18 @@ else
     _GRAPEROOT_OK=1
   fi
   # If pip fails (network, wrong Python version, etc.) — silent fallback to .py
+fi
+
+# Safety net: if graperoot missing AND .py fallback is gone, force reinstall
+if [[ "$_GRAPEROOT_OK" == "0" ]] && [[ ! -f "$SCRIPT_DIR/graph_builder.py" ]]; then
+  echo "[$TOOL_LABEL] graperoot missing and no .py fallback — retrying install..."
+  if "$VENV/bin/pip" install graperoot --upgrade --quiet --no-cache-dir 2>/dev/null; then
+    _GRAPEROOT_OK=1
+  else
+    echo "[$TOOL_LABEL] ERROR: graperoot install failed and no .py fallback available."
+    echo "[$TOOL_LABEL] Fix: $VENV/bin/pip install graperoot"
+    exit 1
+  fi
 fi
 
 # Once compiled package is confirmed working, delete .py source files

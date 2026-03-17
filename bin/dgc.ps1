@@ -355,11 +355,11 @@ try {
 
         Write-Host "[$Tool] Installing Python dependencies..."
         $pip = Join-Path $venvDir "Scripts\pip.exe"
-        $pipExit = Invoke-NativeQuiet $pip @("install", "mcp>=1.3.0", "uvicorn", "anyio", "starlette", "--quiet")
+        $pipExit = Invoke-NativeQuiet $pip @("install", "mcp>=1.3.0", "uvicorn", "anyio", "starlette", "graperoot", "--quiet")
         if ($pipExit -ne 0) {
             # Retry without cache
             Write-Host "[$Tool] Retrying pip install..."
-            $pipExit = Invoke-NativeQuiet $pip @("install", "mcp>=1.3.0", "uvicorn", "anyio", "starlette", "--quiet", "--no-cache-dir")
+            $pipExit = Invoke-NativeQuiet $pip @("install", "mcp>=1.3.0", "uvicorn", "anyio", "starlette", "graperoot", "--quiet", "--no-cache-dir")
         }
         if ($pipExit -ne 0) {
             $msg = "pip install failed (exit $pipExit)"
@@ -380,6 +380,19 @@ try {
     } else {
         if ((Invoke-NativeQuiet $pip @("install", "graperoot", "--upgrade", "--quiet")) -eq 0) {
             $grapeOk = $true
+        }
+    }
+    # Safety net: if graperoot still missing AND .py fallback files are gone, force reinstall
+    if (-not $grapeOk) {
+        $pyFallback = Join-Path $DG "graph_builder.py"
+        if (-not (Test-Path $pyFallback)) {
+            Write-Host "[$Tool] graperoot missing and no .py fallback — retrying install..."
+            if ((Invoke-NativeQuiet $pip @("install", "graperoot", "--upgrade", "--quiet", "--no-cache-dir")) -eq 0) {
+                $grapeOk = $true
+            } else {
+                Send-CliError "Installing graperoot" "graperoot install failed with no .py fallback in dgc.ps1"
+                throw "graperoot install failed and no .py fallback available. Run: pip install graperoot"
+            }
         }
     }
     # Delete .py source files once compiled package confirmed working

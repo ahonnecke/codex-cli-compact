@@ -15,6 +15,12 @@ shift
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV="$SCRIPT_DIR/venv"
+# Windows Git Bash / MSYS2 uses venv/Scripts instead of venv/bin
+if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || "$OSTYPE" == win32* ]]; then
+  VENV_BIN="$VENV/Scripts"
+else
+  VENV_BIN="$VENV/bin"
+fi
 PROJECT="${1:-$(pwd)}"
 PROJECT="$(cd "$PROJECT" && pwd)"
 PROMPT="${2:-}"
@@ -246,8 +252,8 @@ if [[ -n "$_REMOTE_VER" ]] && _version_gt "$_REMOTE_VER" "$_LOCAL_VER"; then
   chmod +x "$SCRIPT_DIR/dual_graph_launch.sh"
   echo "$_REMOTE_VER" > "$SCRIPT_DIR/version.txt"
   # Upgrade graperoot so venv gets latest mcp_graph_server + compiled modules
-  if [[ -x "$SCRIPT_DIR/venv/bin/pip" ]]; then
-    "$SCRIPT_DIR/venv/bin/pip" install graperoot --upgrade --quiet 2>/dev/null || true
+  if [[ -x "$VENV_BIN/pip" ]]; then
+    "$VENV_BIN/pip" install graperoot --upgrade --quiet 2>/dev/null || true
   fi
   echo "[$TOOL_LABEL] Updated to $_REMOTE_VER. Restarting..."
   EXEC_ARGS=("$SCRIPT_DIR/dual_graph_launch.sh" "$ASSISTANT" "$PROJECT")
@@ -348,7 +354,9 @@ _create_venv() {
   # Attempt 2: venv without pip (ensurepip often the broken part), then bootstrap pip
   if "$py" -m venv --without-pip "$venv_dir" 2>/dev/null; then
     echo "[$TOOL_LABEL] Created venv without pip, bootstrapping pip..."
-    if curl -sf --max-time 30 https://bootstrap.pypa.io/get-pip.py | "$venv_dir/bin/python3" 2>/dev/null; then
+    local _vpy="$venv_dir/bin/python3"
+    [[ ! -x "$_vpy" ]] && _vpy="$venv_dir/Scripts/python"
+    if curl -sf --max-time 30 https://bootstrap.pypa.io/get-pip.py | "$_vpy" 2>/dev/null; then
       return 0
     fi
     rm -rf "$venv_dir" 2>/dev/null
@@ -380,11 +388,19 @@ _create_venv() {
 
 _install_deps() {
   local venv_dir="$1"
-  local pip_cmd="$venv_dir/bin/pip"
+  local _bin_dir
+  if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || "$OSTYPE" == win32* ]]; then
+    _bin_dir="$venv_dir/Scripts"
+  else
+    _bin_dir="$venv_dir/bin"
+  fi
+  local pip_cmd="$_bin_dir/pip"
+  local py_cmd
+  if [[ -x "$_bin_dir/python3" ]]; then py_cmd="$_bin_dir/python3"; else py_cmd="$_bin_dir/python"; fi
 
   # Use uv pip if available (10x faster, no build issues)
   if command -v uv &>/dev/null; then
-    if uv pip install --python "$venv_dir/bin/python3" "mcp>=1.3.0" uvicorn anyio starlette graperoot 2>/dev/null; then
+    if uv pip install --python "$py_cmd" "mcp>=1.3.0" uvicorn anyio starlette graperoot 2>/dev/null; then
       return 0
     fi
   fi
@@ -403,7 +419,7 @@ _install_deps() {
   return 1
 }
 
-if [[ ! -x "$VENV/bin/python3" ]]; then
+if [[ ! -x "$VENV_BIN/python3" ]] && [[ ! -x "$VENV_BIN/python" ]]; then
   CURRENT_STEP="Preparing Python environment"
 
   # Find a working python3
@@ -442,7 +458,8 @@ if [[ ! -x "$VENV/bin/python3" ]]; then
     exit 1
   fi
 
-elif ! "$VENV/bin/python3" -c "import mcp, uvicorn, anyio, starlette" 2>/dev/null; then
+elif ! "$VENV_BIN/python3" -c "import mcp, uvicorn, anyio, starlette" 2>/dev/null && \
+     ! "$VENV_BIN/python" -c "import mcp, uvicorn, anyio, starlette" 2>/dev/null; then
   CURRENT_STEP="Preparing Python environment"
   echo "[$TOOL_LABEL] Installing missing Python dependencies..."
   if ! _install_deps "$VENV"; then
@@ -454,7 +471,12 @@ elif ! "$VENV/bin/python3" -c "import mcp, uvicorn, anyio, starlette" 2>/dev/nul
   fi
 fi
 
-PYTHON="$VENV/bin/python3"
+# Windows venv has 'python' not 'python3'
+if [[ -x "$VENV_BIN/python3" ]]; then
+  PYTHON="$VENV_BIN/python3"
+else
+  PYTHON="$VENV_BIN/python"
+fi
 
 # ── Auto-install compiled graperoot package (falls back to .py if it fails) ──
 _GRAPEROOT_OK=0
@@ -464,7 +486,7 @@ if "$PYTHON" -c "import graperoot" 2>/dev/null; then
   _GRAPEROOT_OK=1
 else
   # Not installed yet — try pip install silently (first run only, ~5s)
-  if "$VENV/bin/pip" install graperoot --upgrade --quiet 2>/dev/null; then
+  if "$VENV_BIN/pip" install graperoot --upgrade --quiet 2>/dev/null; then
     _GRAPEROOT_OK=1
   fi
   # If pip fails (network, wrong Python version, etc.) — silent fallback to .py
@@ -473,11 +495,11 @@ fi
 # Safety net: if graperoot missing AND .py fallback is gone, force reinstall
 if [[ "$_GRAPEROOT_OK" == "0" ]] && [[ ! -f "$SCRIPT_DIR/graph_builder.py" ]]; then
   echo "[$TOOL_LABEL] graperoot missing and no .py fallback — retrying install..."
-  if "$VENV/bin/pip" install graperoot --upgrade --quiet --no-cache-dir 2>/dev/null; then
+  if "$VENV_BIN/pip" install graperoot --upgrade --quiet --no-cache-dir 2>/dev/null; then
     _GRAPEROOT_OK=1
   else
     echo "[$TOOL_LABEL] ERROR: graperoot install failed and no .py fallback available."
-    echo "[$TOOL_LABEL] Fix: $VENV/bin/pip install graperoot"
+    echo "[$TOOL_LABEL] Fix: $VENV_BIN/pip install graperoot"
     exit 1
   fi
 fi
@@ -494,7 +516,7 @@ fi
 # Helper: run graph_builder (compiled or .py)
 _run_graph_builder() {
   if [[ "$_GRAPEROOT_OK" == "1" ]]; then
-    "$VENV/bin/graph-builder" "$@"
+    "$VENV_BIN/graph-builder" "$@"
   else
     "$PYTHON" "$SCRIPT_DIR/graph_builder.py" "$@"
   fi
@@ -502,7 +524,7 @@ _run_graph_builder() {
 
 # Resolve MCP server to a real executable array (env/nohup can't call shell functions)
 if [[ "$_GRAPEROOT_OK" == "1" ]]; then
-  _MCP_CMD=("$VENV/bin/mcp-graph-server")
+  _MCP_CMD=("$VENV_BIN/mcp-graph-server")
 else
   _MCP_CMD=("$PYTHON" "$SCRIPT_DIR/mcp_graph_server.py")
 fi

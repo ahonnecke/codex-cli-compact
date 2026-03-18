@@ -825,7 +825,7 @@ echo "[$TOOL_LABEL] Port    : $MCP_PORT"
 echo ""
 
 CURRENT_STEP="Starting MCP server"
-nohup env \
+env \
   DG_DATA_DIR="$DATA_DIR" \
   DUAL_GRAPH_PROJECT_ROOT="$PROJECT" \
   DG_BASE_URL="http://localhost:$MCP_PORT" \
@@ -835,7 +835,7 @@ nohup env \
 MCP_PID=$!
 echo "$MCP_PID" > "$DATA_DIR/mcp_server.pid"
 echo "$MCP_PORT" > "$DATA_DIR/mcp_port"
-trap 'echo ""; echo "[$TOOL_LABEL] Shutting down MCP server (PID $MCP_PID)..."; kill "$MCP_PID" 2>/dev/null; rm -f "$DATA_DIR/mcp_server.pid" "$DATA_DIR/mcp_port"' EXIT INT TERM
+trap 'echo ""; echo "[$TOOL_LABEL] Shutting down MCP server (PID $MCP_PID)..."; kill "$MCP_PID" 2>/dev/null; rm -f "$DATA_DIR/mcp_server.pid" "$DATA_DIR/mcp_port"' EXIT INT TERM HUP
 
 echo "[$TOOL_LABEL] Waiting for MCP server..."
 CURRENT_STEP="Waiting for MCP server"
@@ -854,7 +854,7 @@ if [[ "$_MCP_READY" != "1" ]]; then
   echo "[$TOOL_LABEL] MCP server did not start — restarting on new port..."
   kill "$MCP_PID" 2>/dev/null || true
   MCP_PORT=$((MCP_PORT + 1))
-  nohup env \
+  env \
     DG_DATA_DIR="$DATA_DIR" \
     DUAL_GRAPH_PROJECT_ROOT="$PROJECT" \
     DG_BASE_URL="http://localhost:$MCP_PORT" \
@@ -864,7 +864,7 @@ if [[ "$_MCP_READY" != "1" ]]; then
   MCP_PID=$!
   echo "$MCP_PID" > "$DATA_DIR/mcp_server.pid"
   echo "$MCP_PORT" > "$DATA_DIR/mcp_port"
-  trap 'echo ""; echo "[$TOOL_LABEL] Shutting down MCP server (PID $MCP_PID)..."; kill "$MCP_PID" 2>/dev/null; rm -f "$DATA_DIR/mcp_server.pid" "$DATA_DIR/mcp_port"' EXIT INT TERM
+  trap 'echo ""; echo "[$TOOL_LABEL] Shutting down MCP server (PID $MCP_PID)..."; kill "$MCP_PID" 2>/dev/null; rm -f "$DATA_DIR/mcp_server.pid" "$DATA_DIR/mcp_port"' EXIT INT TERM HUP
   _MCP_READY=0
   for i in $(seq 1 15); do
     if nc -z localhost "$MCP_PORT" 2>/dev/null || \

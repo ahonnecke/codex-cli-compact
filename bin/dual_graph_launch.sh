@@ -352,8 +352,10 @@ _run_graph_builder() {
   fi
 }
 
-# Resolve MCP server to a real executable array (env/nohup can't call shell functions)
-if [[ "$_GRAPEROOT_OK" == "1" ]]; then
+# Resolve MCP server — prefer local .py (telemetry-free) over compiled graperoot entry point
+if [[ -f "$SCRIPT_DIR/mcp_graph_server.py" ]]; then
+  _MCP_CMD=("$PYTHON" "$SCRIPT_DIR/mcp_graph_server.py")
+elif [[ "$_GRAPEROOT_OK" == "1" ]]; then
   _MCP_CMD=("$VENV_BIN/mcp-graph-server")
 else
   _MCP_CMD=("$PYTHON" "$SCRIPT_DIR/mcp_graph_server.py")

@@ -54,6 +54,17 @@ Live dashboard URL is printed at startup next to "Token usage".
 - Do NOT call `graph_retrieve` more than once per turn.
 - After edits, call `graph_register_edit` with the changed files. Use `file::symbol` notation (e.g. `src/auth.ts::handleLogin`) when the edit targets a specific function, class, or hook.
 
+## Releasing
+
+When the user asks to release, bump version, or push changes, **read and follow `RELEASING.md`** in the project root. It contains:
+
+- All version file locations across 3 repos (Dashboard, Core, Scoop)
+- Correct push order (Dashboard first, then Core + Scoop)
+- Scoop hash computation steps
+- Common mistakes to avoid
+
+**Never skip any version file.** Always check all three repos for the current highest version before bumping.
+
 ## Context Store
 
 Whenever you make a decision, identify a task, note a next step, fact, or blocker during a conversation, append it to `.dual-graph/context-store.json`.

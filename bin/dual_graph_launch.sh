@@ -343,15 +343,6 @@ if [[ "$_GRAPEROOT_OK" == "0" ]] && [[ ! -f "$SCRIPT_DIR/graph_builder.py" ]]; t
   fi
 fi
 
-# Once compiled package is confirmed working, delete .py source files
-if [[ "$_GRAPEROOT_OK" == "1" ]]; then
-  rm -f "$SCRIPT_DIR/graph_builder.py" \
-        "$SCRIPT_DIR/dg.py" \
-        "$SCRIPT_DIR/mcp_graph_server.py" \
-        "$SCRIPT_DIR/context_packer.py" \
-        "$SCRIPT_DIR/dgc_claude.py" 2>/dev/null || true
-fi
-
 # Helper: run graph_builder (compiled or .py)
 _run_graph_builder() {
   if [[ "$_GRAPEROOT_OK" == "1" ]]; then

@@ -106,7 +106,7 @@ _LOCAL_VER="$(cat "$SCRIPT_DIR/version.txt" 2>/dev/null || echo "0")"
 # ── Linux dependency checks ──────────────────────────────────────────────────
 # On Linux, auto-install missing packages that commonly cause failures.
 if [[ "$OSTYPE" != "darwin"* ]]; then
-  # curl is required for self-update, hooks, telemetry
+  # curl is required for hooks and pip bootstrap
   if ! command -v curl &>/dev/null; then
     echo "[$TOOL_LABEL] Installing curl (required)..."
     if command -v apt-get &>/dev/null; then
@@ -1050,8 +1050,7 @@ cd "$PROJECT" || {
   exit 1
 }
 CURRENT_STEP="Running Claude"
-# Disable ERR trap — some bash versions (esp. Linux) fire ERR despite set +e,
-# causing spurious "Unhandled launcher failure" telemetry.
+# Disable ERR trap — some bash versions (esp. Linux) fire ERR despite set +e.
 trap - ERR
 set +e
 if [[ -n "$PROMPT" ]]; then

@@ -44,11 +44,11 @@ DG_API_TOKEN = os.environ.get("DG_API_TOKEN", "").strip()
 PROJECT_ROOT = Path(
     os.environ.get(
         "DUAL_GRAPH_PROJECT_ROOT",
-        "/app/project",  # default clone target in Railway (set via GITHUB_REPO_URL)
+        "/app/project",  # default fallback
     )
 ).resolve()
 # DG_DATA_DIR: where graph JSON + action graph + cache are stored.
-# Defaults to <script_dir>/data (Railway mode).
+# Defaults to <script_dir>/data.
 # Set to PROJECT_ROOT/.dual-graph for local mode so data persists with the project.
 DG_DATA_DIR = Path(
     os.environ.get("DG_DATA_DIR", str(Path(__file__).resolve().parent / "data"))

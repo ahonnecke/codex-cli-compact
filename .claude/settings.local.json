@@ -1,4 +1,15 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(command -v docker)",
+      "Bash(docker --version)",
+      "Bash(docker run:*)"
+    ]
+  },
+  "disabledMcpjsonServers": [
+    "notmuch-mcp",
+    "fastmail"
+  ],
   "hooks": {
     "SessionStart": [
       {

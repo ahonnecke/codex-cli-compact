@@ -117,11 +117,13 @@ function Ensure-Line([string]$File, [string]$Line) {
 function Invoke-NativeQuiet([string]$FilePath, [string[]]$Arguments) {
     $hasNativePref = Test-Path variable:PSNativeCommandUseErrorActionPreference
     if ($hasNativePref) { $previousNativePref = $PSNativeCommandUseErrorActionPreference }
+    $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "Continue"
     try {
         if ($hasNativePref) { $global:PSNativeCommandUseErrorActionPreference = $false }
         & $FilePath @Arguments > $null 2>&1
         return $LASTEXITCODE
     } finally {
+        $ErrorActionPreference = $prevEAP
         if ($hasNativePref) { $global:PSNativeCommandUseErrorActionPreference = $previousNativePref }
     }
 }
@@ -129,10 +131,12 @@ function Invoke-NativeQuiet([string]$FilePath, [string[]]$Arguments) {
 function Invoke-NativeCapture([string]$FilePath, [string[]]$Arguments) {
     $hasNativePref = Test-Path variable:PSNativeCommandUseErrorActionPreference
     if ($hasNativePref) { $previousNativePref = $PSNativeCommandUseErrorActionPreference }
+    $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "Continue"
     try {
         if ($hasNativePref) { $global:PSNativeCommandUseErrorActionPreference = $false }
         return & $FilePath @Arguments 2>$null
     } finally {
+        $ErrorActionPreference = $prevEAP
         if ($hasNativePref) { $global:PSNativeCommandUseErrorActionPreference = $previousNativePref }
     }
 }
@@ -861,7 +865,11 @@ if ($transcript -and (Test-Path $transcript)) {
     exit $claudeExit
 } catch {
     $message = "$($_.Exception.Message)"
-    if ($message) { Send-CliError "Launcher" $message }
+    # Include script location if available for better diagnostics
+    $location = if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) { " [line $($_.InvocationInfo.ScriptLineNumber)]" } else { "" }
+    $detail = "$message$location"
+    if ($detail.Length -gt 700) { $detail = $detail.Substring(0, 700) }
+    if ($detail) { Send-CliError "Launcher" $detail }
     Write-Host "[$Tool] Error: $message" -ForegroundColor Red
     exit 1
 }

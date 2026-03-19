@@ -37,6 +37,19 @@ The `mcp_graph_server` component is distributed as a compiled Python package
 that contacts a server every 15 minutes with machine identity. This heartbeat is
 being removed by the package maintainer in a forthcoming release.
 
+## Always-on mode (stdio MCP)
+
+You can register dual-graph as a global Claude MCP server so it runs
+automatically with every `claude` session — no need to use `dgc`:
+
+```bash
+claude mcp add --scope user --transport stdio dual-graph -- ~/.dual-graph/dgc-mcp
+```
+
+Claude manages the server lifecycle (spawns on session start, kills on exit).
+The server is project-scoped: it uses the current working directory as the
+project root and stores all data in `.dual-graph/` within that project.
+
 ## Network calls that always happen (not gated by flags)
 - `pip install graperoot` and other dependencies — standard PyPI package installation
 - Localhost-only HTTP between the launcher and the local MCP server

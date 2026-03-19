@@ -448,6 +448,16 @@ try {
         }
     }
 
+    # Validate project path exists before resolving
+    if (-not (Test-Path -LiteralPath $ProjectPath)) {
+        $msg = "Project path not found: $ProjectPath"
+        Write-Host "[$Tool] ERROR: $msg" -ForegroundColor Red
+        Write-Host "[$Tool] Check that the path exists and try again."
+        Send-CliError "Validating project path" $msg
+        Stop-McpServer $pidFile $portFile
+        exit 1
+    }
+
     # Use Get-Item to get the canonical Windows path with correct casing
     # (Resolve-Path preserves whatever casing the user typed, which can cause os error 123)
     $resolvedProject = (Get-Item -LiteralPath (Resolve-Path -LiteralPath $ProjectPath).Path).FullName

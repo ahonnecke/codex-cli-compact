@@ -94,6 +94,21 @@ try {
         $venvPython = Join-Path $venvDir "Scripts\python.exe"
         $venvCfg = Join-Path $venvDir "pyvenv.cfg"
 
+        # Kill any processes holding venv files open FIRST — before any checks or early returns.
+        # Locked DLLs (e.g. pywintypes311.dll) cause WinError 5 on pip install even when the
+        # venv looks healthy. Must kill before probing, not just before removing.
+        try {
+            Get-Process | Where-Object {
+                try { $_.Path -and $_.Path.StartsWith($InstallDir) } catch { $false }
+            } | ForEach-Object {
+                try { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue } catch {}
+            }
+            Get-WmiObject Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -ErrorAction SilentlyContinue |
+                Where-Object { $_.CommandLine -and $_.CommandLine -like "*$InstallDir*" } |
+                ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }
+            Start-Sleep -Milliseconds 500
+        } catch {}
+
         # Only probe the existing venv if it looks structurally complete.
         # Checking pyvenv.cfg FIRST avoids running a broken python.exe
         # (which would lock files and prevent cleanup on Windows).
@@ -112,21 +127,6 @@ try {
                 return
             }
         }
-
-        # Kill any processes that might be holding venv files open (mcp-graph-server, graph-builder, etc.)
-        # Without this, locked DLLs prevent both rename-then-delete and --clear from working.
-        try {
-            Get-Process | Where-Object {
-                try { $_.Path -and $_.Path.StartsWith($INSTALL_DIR) } catch { $false }
-            } | ForEach-Object {
-                try { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue } catch {}
-            }
-            # Also kill any python processes using our venv (by command line path)
-            Get-WmiObject Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -ErrorAction SilentlyContinue |
-                Where-Object { $_.CommandLine -and $_.CommandLine -like "*$INSTALL_DIR*" } |
-                ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }
-            Start-Sleep -Milliseconds 500
-        } catch {}
 
         # Remove any existing (broken or partial) venv before creating fresh.
         # Use rename-then-delete so locked files don't block the new venv.
@@ -415,8 +415,20 @@ try {
 
     $step = "Installing Python dependencies"
     Write-Host "[install] Installing Python dependencies..."
-    & "$INSTALL_DIR\venv\Scripts\python.exe" -m pip install --upgrade pip --quiet
-    & "$INSTALL_DIR\venv\Scripts\python.exe" -m pip install "mcp>=1.3.0" uvicorn anyio starlette --quiet
+    $venvPy = "$INSTALL_DIR\venv\Scripts\python.exe"
+    & $venvPy -m pip install --upgrade pip --quiet
+    $pipOut = & $venvPy -m pip install "mcp>=1.3.0" uvicorn anyio starlette --quiet 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0 -or $pipOut -match 'WinError 5|Access is denied') {
+        # Locked DLLs (e.g. pywin32) — kill processes and force-reinstall without them
+        Write-Host "[install] pip install hit locked files. Killing processes and retrying..."
+        try {
+            Get-WmiObject Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -ErrorAction SilentlyContinue |
+                Where-Object { $_.CommandLine -and $_.CommandLine -like "*$INSTALL_DIR*" } |
+                ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }
+            Start-Sleep -Milliseconds 800
+        } catch {}
+        & $venvPy -m pip install --force-reinstall "mcp>=1.3.0" uvicorn anyio starlette --quiet 2>$null
+    }
 
     # Verify mcp is importable
     $step = "Verifying MCP import"

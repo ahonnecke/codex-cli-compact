@@ -1927,5 +1927,50 @@ echo "  dgc /path/to/project   # Claude Code (local MCP, fully private)"
     return 0
 
 
+def main_stdio() -> int:
+    """Run the MCP server over stdin/stdout (stdio transport).
+
+    Detects project root from cwd, auto-creates .dual-graph/ data dir,
+    and runs the graph scan on startup so tools are immediately usable.
+    """
+    global PROJECT_ROOT, DG_DATA_DIR, LOG_FILE, ACTION_GRAPH_FILE
+    global RETRIEVAL_CACHE_FILE, SYMBOL_INDEX_FILE, CONTEXT_STORE_FILE
+
+    import anyio
+
+    # Derive project root from cwd unless explicitly set
+    if not os.environ.get("DUAL_GRAPH_PROJECT_ROOT"):
+        PROJECT_ROOT = Path.cwd().resolve()
+    else:
+        PROJECT_ROOT = Path(os.environ["DUAL_GRAPH_PROJECT_ROOT"]).resolve()
+
+    DG_DATA_DIR = PROJECT_ROOT / ".dual-graph"
+    DG_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_FILE = DG_DATA_DIR / "mcp_tool_calls.jsonl"
+    ACTION_GRAPH_FILE = DG_DATA_DIR / "chat_action_graph.json"
+    RETRIEVAL_CACHE_FILE = DG_DATA_DIR / "retrieval_cache.json"
+    SYMBOL_INDEX_FILE = DG_DATA_DIR / "symbol_index.json"
+    CONTEXT_STORE_FILE = DG_DATA_DIR / "context-store.json"
+
+    # Auto-scan project if graph doesn't exist yet
+    graph_json = DG_DATA_DIR / "info_graph.json"
+    if not graph_json.exists() and _gb_scan is not None:
+        try:
+            graph = _gb_scan(root=PROJECT_ROOT)
+            graph_json.write_text(json.dumps(graph, indent=2), encoding="utf-8")
+        except Exception:
+            pass  # graph_continue will handle needs_project=true
+
+    mcp = build_server()
+
+    async def run_stdio() -> None:
+        await mcp.run_stdio_async()
+
+    anyio.run(run_stdio)
+    return 0
+
+
 if __name__ == "__main__":
+    if "--stdio" in _sys.argv:
+        raise SystemExit(main_stdio())
     raise SystemExit(main())

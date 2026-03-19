@@ -25,8 +25,6 @@ PROJECT="${1:-$(pwd)}"
 PROJECT="$(cd "$PROJECT" && pwd)"
 PROMPT="${2:-}"
 DATA_DIR="$PROJECT/.dual-graph"
-TELEMETRY_WEBHOOK="https://script.google.com/macros/s/AKfycbyq_5igbBUORhSqMNktAoX2GQg8BadKcYZOTV-XRUr3vbY3QuK7jjS8EWLg_pZyMDuD/exec"
-REPORTED_ERROR=0
 CURRENT_STEP="Initializing launcher"
 
 if [[ "$ASSISTANT" == "codex" ]]; then
@@ -46,107 +44,6 @@ else
 fi
 echo "[$TOOL_LABEL]   3. Join Discord for help: https://discord.gg/rxgVVgCh"
 echo ""
-
-_platform_name() {
-  if [[ "$OSTYPE" == "darwin"* ]]; then
-    echo "macos"
-  else
-    echo "linux"
-  fi
-}
-
-_machine_id() {
-  python3 - "$SCRIPT_DIR/identity.json" <<'PY' 2>/dev/null || echo "unknown"
-import json
-import os
-import platform
-import subprocess
-import sys
-import uuid
-from pathlib import Path
-
-identity_path = Path(sys.argv[1])
-
-def get_machine_id() -> str:
-    sys_name = platform.system()
-    try:
-        if sys_name == "Darwin":
-            out = subprocess.check_output(
-                ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
-                stderr=subprocess.DEVNULL,
-                timeout=3,
-            ).decode()
-            for line in out.splitlines():
-                if "IOPlatformUUID" in line:
-                    return line.split('"')[3]
-        elif sys_name == "Linux":
-            for p in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
-                try:
-                    val = Path(p).read_text().strip()
-                    if val:
-                        return val
-                except OSError:
-                    pass
-    except Exception:
-        pass
-    return str(uuid.getnode())
-
-try:
-    if identity_path.exists():
-        data = json.loads(identity_path.read_text(encoding="utf-8"))
-        mid = data.get("machine_id", "").strip()
-        if mid:
-            print(mid)
-            raise SystemExit(0)
-    mid = get_machine_id()
-    identity_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "machine_id": mid,
-        "platform": platform.system().lower(),
-        "tool": "launcher-auto",
-    }
-    identity_path.write_text(json.dumps(payload), encoding="utf-8")
-    print(mid)
-except Exception:
-    print("unknown")
-PY
-}
-
-_send_cli_error() {
-  local step="$1"
-  local message="$2"
-  local machine_id platform payload
-  REPORTED_ERROR=1
-  machine_id="$(_machine_id | tr -d '\r\n')"
-  platform="$(_platform_name | tr -d '\r\n')"
-  payload="$(python3 - "$step" "$message" "$machine_id" "$platform" <<'PY' 2>/dev/null || true
-import json, sys
-print(json.dumps({
-    "type": "cli_error",
-    "platform": sys.argv[4],
-    "machine_id": sys.argv[3],
-    "error_message": sys.argv[2],
-    "script_step": sys.argv[1],
-}))
-PY
-)"
-  if [[ -n "$payload" ]]; then
-    curl -sf -X POST "$TELEMETRY_WEBHOOK" \
-      -H "Content-Type: application/json" \
-      -d "$payload" \
-      >/dev/null 2>&1 || true
-  fi
-}
-
-_on_launcher_err() {
-  local rc="$?"
-  if [[ "$ASSISTANT" == "claude" && "$REPORTED_ERROR" != "1" ]]; then
-    _send_cli_error "${CURRENT_STEP:-Unknown step}" "Unhandled launcher failure in dual_graph_launch.sh (exit=$rc)"
-  fi
-  return "$rc"
-}
-
-trap '_on_launcher_err' ERR
 
 # ── Kill any stale MCP server for this project (frees its port before scanning) ─
 if [[ -f "$DATA_DIR/mcp_server.pid" ]]; then
@@ -372,7 +269,7 @@ if [[ ! -x "$VENV_BIN/python3" ]] && [[ ! -x "$VENV_BIN/python" ]]; then
     echo "[$TOOL_LABEL]   macOS:   brew install python@3.12"
     echo "[$TOOL_LABEL]   Ubuntu:  sudo apt install python3 python3-venv"
     echo "[$TOOL_LABEL]   Windows: https://python.org/downloads"
-    _send_cli_error "Preparing Python environment" "No Python 3.10+ found in PATH or common locations"
+
     exit 1
   fi
 
@@ -385,7 +282,7 @@ if [[ ! -x "$VENV_BIN/python3" ]] && [[ ! -x "$VENV_BIN/python" ]]; then
     echo "[$TOOL_LABEL] ERROR: All venv creation methods failed."
     echo "[$TOOL_LABEL] Last error: $_VENV_ERR"
     echo "[$TOOL_LABEL] Manual fix: $_FOUND_PY -m pip install virtualenv && $_FOUND_PY -m virtualenv $VENV"
-    _send_cli_error "Preparing Python environment" "All venv methods failed (py=$_FOUND_PY): $_VENV_ERR"
+
     exit 1
   fi
   echo "[$TOOL_LABEL] Venv created."
@@ -396,7 +293,7 @@ if [[ ! -x "$VENV_BIN/python3" ]] && [[ ! -x "$VENV_BIN/python" ]]; then
     _PIP_ERR="$(cat /tmp/dgc_pip_err.txt 2>/dev/null | tail -5)"
     echo "[$TOOL_LABEL] ERROR: Failed to install dependencies."
     echo "[$TOOL_LABEL] $_PIP_ERR"
-    _send_cli_error "Preparing Python environment" "pip install failed: $_PIP_ERR"
+
     exit 1
   fi
 
@@ -408,7 +305,7 @@ elif ! "$VENV_BIN/python3" -c "import mcp, uvicorn, anyio, starlette" 2>/dev/nul
     _PIP_ERR="$(cat /tmp/dgc_pip_err.txt 2>/dev/null | tail -5)"
     echo "[$TOOL_LABEL] ERROR: Failed to install dependencies."
     echo "[$TOOL_LABEL] $_PIP_ERR"
-    _send_cli_error "Preparing Python environment" "pip install (retry) failed: $_PIP_ERR"
+
     exit 1
   fi
 fi
@@ -756,7 +653,7 @@ if [[ "$_SCAN_OK" != "1" ]]; then
   echo "[$TOOL_LABEL] Error: project scan failed after retry."
   _SCAN_TAIL="$(tail -n 20 "$_SCAN_ERR_FILE" 2>/dev/null | tr '\n' ' ' | tr '\r' ' ' | sed 's/[[:space:]]\+/ /g' | cut -c1-700)"
   [[ -z "$_SCAN_TAIL" ]] && _SCAN_TAIL="no stderr captured"
-  _send_cli_error "Scanning project" "Project scan failed in dual_graph_launch.sh: $_SCAN_TAIL"
+
   exit 1
 fi
 rm -f "$_SCAN_ERR_FILE" 2>/dev/null || true
@@ -818,7 +715,7 @@ if [[ "$_MCP_READY" != "1" ]]; then
   done
   if [[ "$_MCP_READY" != "1" ]]; then
     echo "[$TOOL_LABEL] Error: MCP server did not start after retry. Check $DATA_DIR/mcp_server.log"
-    _send_cli_error "Starting MCP server" "MCP server did not start in dual_graph_launch.sh (retried)"
+
     exit 1
   fi
   echo "[$TOOL_LABEL] MCP server recovered on port $MCP_PORT."
@@ -986,7 +883,7 @@ if [[ "$ASSISTANT" == "codex" ]]; then
     if ! command -v codex &>/dev/null; then
       echo "[$TOOL_LABEL] ERROR: could not auto-install codex CLI."
       echo "[$TOOL_LABEL]   npm install -g @openai/codex"
-      _send_cli_error "Registering MCP" "codex CLI not found, auto-install failed"
+
       exit 1
     fi
     echo "[$TOOL_LABEL] codex CLI installed."
@@ -1032,7 +929,7 @@ if [[ "$ASSISTANT" == "codex" ]]; then
     echo "[$TOOL_LABEL]   npm install -g @openai/codex mcp-remote"
     echo "[$TOOL_LABEL]   Then run dg again."
     echo "[$TOOL_LABEL] If it still fails, join Discord: https://discord.gg/rxgVVgCh"
-    _send_cli_error "Registering MCP" "MCP registration failed after auto-fix (codex): $_CODEX_REG_ERR"
+
     exit 1
   fi
 else
@@ -1048,7 +945,7 @@ else
     if ! command -v claude &>/dev/null; then
       echo "[$TOOL_LABEL] ERROR: could not auto-install claude CLI."
       echo "[$TOOL_LABEL]   npm install -g @anthropic-ai/claude-code"
-      _send_cli_error "Registering MCP" "claude CLI not found, auto-install failed"
+
       exit 1
     fi
     echo "[$TOOL_LABEL] claude CLI installed."
@@ -1087,7 +984,7 @@ else
     echo "[$TOOL_LABEL]   npm install -g @anthropic-ai/claude-code"
     echo "[$TOOL_LABEL]   Then run dgc again."
     echo "[$TOOL_LABEL] If it still fails, join Discord: https://discord.gg/rxgVVgCh"
-    _send_cli_error "Registering MCP" "MCP registration failed after auto-fix (claude): $_MCP_REG_ERR"
+
     exit 1
   fi
   echo "[$TOOL_LABEL] MCP config updated -> http://localhost:$MCP_PORT/mcp"
@@ -1103,47 +1000,6 @@ else
   # ───────────────────────────────────────────────────────────────────────────
 fi
 
-# ── One-time feedback form ─────────────────────────────────────────────────────
-_FEEDBACK_DONE="$SCRIPT_DIR/feedback_done"
-_INSTALL_DATE_FILE="$SCRIPT_DIR/install_date.txt"
-if [[ ! -f "$_FEEDBACK_DONE" ]] && [[ -t 0 ]]; then
-  _SHOW_FEEDBACK=1
-  if [[ -f "$_INSTALL_DATE_FILE" ]]; then
-    _INSTALL_DATE="$(cat "$_INSTALL_DATE_FILE")"
-    if ! python3 - "$_INSTALL_DATE" <<'PY' >/dev/null 2>&1; then
-from datetime import date
-import sys
-try:
-    install = date.fromisoformat(sys.argv[1].strip())
-    ready = (date.today() - install).days >= 2
-    raise SystemExit(0 if ready else 1)
-except Exception:
-    raise SystemExit(1)
-PY
-      _SHOW_FEEDBACK=0
-    fi
-  fi
-  if [[ "$_SHOW_FEEDBACK" == "1" ]]; then
-    echo "===================================================="
-    echo "  One quick question before we start (asked once only)"
-    echo "===================================================="
-    printf "  How useful has Graperoot been so far? (1-5): "
-    read -r _FB_RATING < /dev/tty || _FB_RATING=""
-    printf "  Anything you'd improve? (press Enter to skip): "
-    read -r _FB_IMPROVE < /dev/tty || _FB_IMPROVE=""
-    _MACHINE_ID="$(cat "$SCRIPT_DIR/identity.json" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('machine_id','unknown'))" 2>/dev/null || echo "unknown")"
-    curl -sf -X POST "https://script.google.com/macros/s/AKfycbzsOnvAiDTdhDaW73ErztJztPqT25WOCFn29VzrRYZRhBUIwHRu677DoATctAEiq6dp4Q/exec" \
-      -H "Content-Type: application/json" \
-      -d "{\"rating\":\"$_FB_RATING\",\"improve\":\"$_FB_IMPROVE\",\"machine_id\":\"$_MACHINE_ID\"}" \
-      >/dev/null 2>&1 || true
-    touch "$_FEEDBACK_DONE"
-    echo "  Thanks! You won't see this again."
-    echo "===================================================="
-    echo ""
-  fi
-fi
-# ──────────────────────────────────────────────────────────────────────────────
-
 # ── Pre-flight checks ────────────────────────────────────────────────────────
 CURRENT_STEP="Pre-flight checks"
 
@@ -1158,7 +1014,7 @@ if ! command -v "$ASSISTANT" &>/dev/null; then
     else
       echo "[$TOOL_LABEL]   npm install -g @openai/codex"
     fi
-    _send_cli_error "Pre-flight checks" "$ASSISTANT CLI not found after auto-install"
+
     exit 1
   fi
 fi
@@ -1171,7 +1027,7 @@ if command -v node &>/dev/null; then
     echo "[$TOOL_LABEL] Upgrade Node.js:"
     echo "[$TOOL_LABEL]   https://nodejs.org/en/download"
     echo "[$TOOL_LABEL]   Or: fnm install 22 && fnm use 22"
-    _send_cli_error "Pre-flight checks" "Node.js too old: v$_NODE_VER (need 18+)"
+
     exit 1
   fi
 fi
@@ -1188,7 +1044,7 @@ if ! kill -0 "$MCP_PID" 2>/dev/null; then
   _MCP_LOG_TAIL="$(tail -n 20 "$DATA_DIR/mcp_server.log" 2>/dev/null | tr '\n' ' ' | cut -c1-500)"
   echo "[$TOOL_LABEL] Last log: $_MCP_LOG_TAIL"
   echo "[$TOOL_LABEL] Try running dgc again. If it persists, join Discord: https://discord.gg/rxgVVgCh"
-  _send_cli_error "Pre-flight checks" "MCP server died before Claude started: $_MCP_LOG_TAIL"
+
   exit 1
 fi
 
@@ -1199,7 +1055,7 @@ echo ""
 
 CURRENT_STEP="Changing to project directory"
 cd "$PROJECT" || {
-  _send_cli_error "Changing to project directory" "Cannot cd to project: $PROJECT"
+
   exit 1
 }
 CURRENT_STEP="Running Claude"
@@ -1232,7 +1088,6 @@ if [[ "$ASSISTANT_EXIT" -ne 0 && "$ASSISTANT_EXIT" -ne 130 && "$ASSISTANT_EXIT" 
   echo "[$TOOL_LABEL]   2. Try running '$ASSISTANT' directly to see if it works"
   echo "[$TOOL_LABEL]   3. Run dgc again — it may be a transient issue"
   echo "[$TOOL_LABEL]   4. Join Discord for help: https://discord.gg/rxgVVgCh"
-  _send_cli_error "Running $ASSISTANT" "$ASSISTANT exited=$ASSISTANT_EXIT stderr=$_STDERR_TAIL"
 fi
 # Clean up stderr log on success
 [[ "$ASSISTANT_EXIT" -eq 0 ]] && rm -f "$DATA_DIR/assistant_stderr.log" 2>/dev/null

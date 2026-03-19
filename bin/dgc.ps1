@@ -117,11 +117,13 @@ function Ensure-Line([string]$File, [string]$Line) {
 function Invoke-NativeQuiet([string]$FilePath, [string[]]$Arguments) {
     $hasNativePref = Test-Path variable:PSNativeCommandUseErrorActionPreference
     if ($hasNativePref) { $previousNativePref = $PSNativeCommandUseErrorActionPreference }
+    $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "Continue"
     try {
         if ($hasNativePref) { $global:PSNativeCommandUseErrorActionPreference = $false }
         & $FilePath @Arguments > $null 2>&1
         return $LASTEXITCODE
     } finally {
+        $ErrorActionPreference = $prevEAP
         if ($hasNativePref) { $global:PSNativeCommandUseErrorActionPreference = $previousNativePref }
     }
 }
@@ -129,10 +131,12 @@ function Invoke-NativeQuiet([string]$FilePath, [string[]]$Arguments) {
 function Invoke-NativeCapture([string]$FilePath, [string[]]$Arguments) {
     $hasNativePref = Test-Path variable:PSNativeCommandUseErrorActionPreference
     if ($hasNativePref) { $previousNativePref = $PSNativeCommandUseErrorActionPreference }
+    $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "Continue"
     try {
         if ($hasNativePref) { $global:PSNativeCommandUseErrorActionPreference = $false }
         return & $FilePath @Arguments 2>$null
     } finally {
+        $ErrorActionPreference = $prevEAP
         if ($hasNativePref) { $global:PSNativeCommandUseErrorActionPreference = $previousNativePref }
     }
 }
@@ -419,13 +423,45 @@ try {
     $pip = Join-Path $DG "venv\Scripts\pip.exe"
     $VenvBin = Join-Path $DG "venv\Scripts"
 
+    # Kill any previous MCP server BEFORE the graperoot upgrade.
+    # pip upgrade replaces graph-builder.exe and mcp-graph-server.exe — if mcp-graph-server.exe
+    # is still running, pip deletes graph-builder.exe (step 1) then hits WinError 32 on the
+    # locked mcp-graph-server.exe (step 2), leaving graperoot half-uninstalled.
+    # Use taskkill /F — it kills processes from other terminal sessions where Stop-Process
+    # gets "Access Denied" because it only works on processes owned by the current session.
+    $pidFile = Join-Path $DG "mcp_server.pid"
+    $portFile = Join-Path $DG "mcp_port"
+    if (Test-Path $pidFile) {
+        try { Stop-Process -Id ([int](Get-Content $pidFile -Raw)) -Force -ErrorAction SilentlyContinue } catch {}
+        Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
+    }
+    # taskkill /F works across sessions; Stop-Process is a fallback for non-Windows
+    try { & taskkill /F /IM "mcp-graph-server.exe" /T 2>$null } catch {}
+    try { & taskkill /F /IM "graph-builder.exe" /T 2>$null } catch {}
+    # Also kill by port (catches renamed or custom server processes)
+    try {
+        Get-NetTCPConnection -LocalPort (8080..8099) -State Listen -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty OwningProcess -Unique |
+            ForEach-Object { try { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } catch {} }
+    } catch {}
+    Start-Sleep -Milliseconds 500
+
     # Auto-install compiled graperoot package (silent fallback to .py if it fails)
     $grapeOk = $false
+    $grapeBuilderExe = Join-Path $VenvBin "graph-builder.exe"
     if ((Invoke-NativeQuiet $Python @("-c", "import graperoot")) -eq 0) {
-        $grapeOk = $true
-    } else {
-        if ((Invoke-NativeQuiet $pip @("install", "graperoot", "--upgrade", "--quiet")) -eq 0) {
+        # Module is importable — but also verify graph-builder.exe exists.
+        # A partial pip upgrade deletes graph-builder.exe first, then fails on the locked
+        # mcp-graph-server.exe, leaving graperoot importable but graph-builder.exe missing.
+        if (Test-Path $grapeBuilderExe) {
             $grapeOk = $true
+        } else {
+            Write-Host "[$Tool] graperoot partially installed (graph-builder.exe missing) -- reinstalling..."
+        }
+    }
+    if (-not $grapeOk) {
+        if ((Invoke-NativeQuiet $pip @("install", "graperoot", "--upgrade", "--quiet")) -eq 0) {
+            $grapeOk = (Test-Path $grapeBuilderExe)
         }
     }
     # Safety net: if graperoot still missing AND .py fallback files are gone, force reinstall
@@ -446,6 +482,16 @@ try {
         @("graph_builder.py", "dg.py", "mcp_graph_server.py", "context_packer.py", "dgc_claude.py") | ForEach-Object {
             Remove-Item (Join-Path $DG $_) -ErrorAction SilentlyContinue
         }
+    }
+
+    # Validate project path exists before resolving
+    if (-not (Test-Path -LiteralPath $ProjectPath)) {
+        $msg = "Project path not found: $ProjectPath"
+        Write-Host "[$Tool] ERROR: $msg" -ForegroundColor Red
+        Write-Host "[$Tool] Check that the path exists and try again."
+        Send-CliError "Validating project path" $msg
+        Stop-McpServer $pidFile $portFile
+        exit 1
     }
 
     # Use Get-Item to get the canonical Windows path with correct casing
@@ -501,6 +547,11 @@ try {
     Write-Host "[$Tool] Project : $resolvedProject"
     Write-Host "[$Tool] Data    : $DataDir"
     Write-Host ""
+    # Use Continue for all native-command calls (graph-builder, mcp-graph-server, claude)
+    # so that stderr output (tracebacks, npm notices) doesn't become a terminating error
+    # under the global $ErrorActionPreference = "Stop".
+    $prevEAPNative = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+
     Write-Host "[$Tool] Scanning project..."
     if ($grapeOk) {
         & (Join-Path $VenvBin "graph-builder.exe") --root $resolvedProject --out (Join-Path $DataDir "info_graph.json") 2> $scanErr
@@ -538,7 +589,9 @@ try {
         Remove-Item $portFile -Force -ErrorAction SilentlyContinue
     }
 
-    # Kill any orphaned MCP server processes left by previous failed runs.
+    # Kill any orphaned MCP server processes left by previous sessions.
+    # taskkill /F works across terminal sessions; Stop-Process only works within same session.
+    try { & taskkill /F /IM "mcp-graph-server.exe" /T 2>$null } catch {}
     try {
         Get-NetTCPConnection -LocalPort (8080..8099) -State Listen -ErrorAction SilentlyContinue |
             Select-Object -ExpandProperty OwningProcess -Unique |
@@ -567,6 +620,17 @@ try {
     }
     Write-Host "[$Tool] MCP server ready on port $port."
     Write-Host ""
+
+    # Pre-check: claude must be in PATH
+    $claudeCmd = Get-Command claude -ErrorAction SilentlyContinue
+    if (-not $claudeCmd) {
+        $msg = "Claude Code CLI not found in PATH. Install it with: npm install -g @anthropic-ai/claude-code"
+        Write-Host "[$Tool] ERROR: $msg" -ForegroundColor Red
+        Write-Host "[$Tool] After installing, close and reopen your terminal, then run dgc again."
+        Send-CliError "Checking prerequisites" $msg
+        Stop-McpServer $pidFile $portFile
+        exit 1
+    }
 
     # PowerShell 7 can treat non-zero native exits as terminating errors.
     # Handle Claude CLI exits explicitly so "not found" on remove stays harmless.
@@ -811,6 +875,9 @@ if ($transcript -and (Test-Path $transcript)) {
         Send-CliError "Running Claude" "Claude exited with code $claudeExit in dgc.ps1"
     }
 
+    # Restore strict error handling for cleanup
+    $ErrorActionPreference = $prevEAPNative
+
     Write-Host ""
     Write-Host "[$Tool] Cleaning up..."
     Remove-ClaudeMcpSafe "dual-graph"
@@ -832,7 +899,11 @@ if ($transcript -and (Test-Path $transcript)) {
     exit $claudeExit
 } catch {
     $message = "$($_.Exception.Message)"
-    if ($message) { Send-CliError "Launcher" $message }
+    # Include script location if available for better diagnostics
+    $location = if ($_.InvocationInfo -and $_.InvocationInfo.ScriptLineNumber) { " [line $($_.InvocationInfo.ScriptLineNumber)]" } else { "" }
+    $detail = "$message$location"
+    if ($detail.Length -gt 700) { $detail = $detail.Substring(0, 700) }
+    if ($detail) { Send-CliError "Launcher" $detail }
     Write-Host "[$Tool] Error: $message" -ForegroundColor Red
     exit 1
 }

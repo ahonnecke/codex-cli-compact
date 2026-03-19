@@ -94,9 +94,46 @@ try {
         $venvPython = Join-Path $venvDir "Scripts\python.exe"
         $venvCfg = Join-Path $venvDir "pyvenv.cfg"
 
-        # Only probe the existing venv if it looks structurally complete.
-        # Checking pyvenv.cfg FIRST avoids running a broken python.exe
-        # (which would lock files and prevent cleanup on Windows).
+        # Step 1: Kill all processes using our install dir BEFORE touching the venv.
+        # pywin32 DLLs (pywintypes311.dll) get locked as soon as any process in the
+        # venv loads them. Killing first ensures they are unlocked for uninstall/removal.
+        try {
+            Get-Process | Where-Object {
+                try { $_.Path -and $_.Path.StartsWith($InstallDir) } catch { $false }
+            } | ForEach-Object {
+                try { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue } catch {}
+            }
+            Get-WmiObject Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -ErrorAction SilentlyContinue |
+                Where-Object { $_.CommandLine -and $_.CommandLine -like "*$InstallDir*" } |
+                ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }
+            Start-Sleep -Milliseconds 500
+        } catch {}
+
+        # Step 2: Neutralise any orphaned pywin32 left by a previous installer version.
+        # pip uninstall exits 0 but leaves pywin32.pth behind when the DLL is locked.
+        # The leftover .pth makes every Python startup print a ModuleNotFoundError to
+        # stderr, which becomes a terminating exception under EAP=Stop.
+        # Fix: delete the .pth; if Windows ACLs block deletion, overwrite with empty
+        # content — write permission is granted even when delete isn't.
+        $sitePkgs = Join-Path $venvDir "Lib\site-packages"
+        $pywin32Pth = Join-Path $sitePkgs "pywin32.pth"
+        if (Test-Path $pywin32Pth) {
+            Write-Host "[install] Neutralising orphaned pywin32 (left by previous install)..."
+            # 1. Try deletion first
+            try { Remove-Item $pywin32Pth -Force -ErrorAction Stop } catch {
+                # Deletion failed — overwrite with empty content so site.py ignores it
+                try { [System.IO.File]::WriteAllText($pywin32Pth, "") } catch {}
+            }
+            # 2. Best-effort cleanup of DLL folder (may be locked — non-fatal)
+            $pw32sys = Join-Path $sitePkgs "pywin32_system32"
+            if (Test-Path $pw32sys) {
+                try { Remove-Item $pw32sys -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+            }
+            # 3. pip uninstall for registry cleanup — don't depend on exit code
+            Invoke-Native { & $venvPython -m pip uninstall pywin32 pywin32-ctypes -y } | Out-Null
+        }
+
+        # Step 3: Probe the existing venv — reuse only if structurally complete and pip works.
         if ((Test-Path $venvPython) -and (Test-Path $venvCfg)) {
             Invoke-Native { & $venvPython -m pip --version } | Out-Null
             if ($LASTEXITCODE -eq 0) {
@@ -400,18 +437,28 @@ try {
 
     $step = "Installing Python dependencies"
     Write-Host "[install] Installing Python dependencies..."
-    & "$INSTALL_DIR\venv\Scripts\python.exe" -m pip install --upgrade pip --quiet
-    & "$INSTALL_DIR\venv\Scripts\python.exe" -m pip install "mcp>=1.3.0" uvicorn anyio starlette graperoot --quiet
+    $venvPy = "$INSTALL_DIR\venv\Scripts\python.exe"
+
+    # Write a constraints file that blocks pywin32 permanently.
+    $constraintsFile = Join-Path $INSTALL_DIR "pip-constraints.txt"
+    "pywin32<0`npywin32-ctypes<0" | Set-Content $constraintsFile -Encoding UTF8
+
+    # Use Invoke-Native for ALL pip calls — Python prints pywin32.pth errors to stderr
+    # on startup even after we delete the .pth, and EAP=Stop turns that into a crash.
+    Invoke-Native { & $venvPy -m pip install --upgrade pip --quiet } | Out-Null
+    Invoke-Native { & $venvPy -m pip install "mcp>=1.3.0" uvicorn anyio starlette --quiet --constraint $constraintsFile } | Out-Null
 
     # Verify mcp is importable
     $step = "Verifying MCP import"
-    $check = & "$INSTALL_DIR\venv\Scripts\python.exe" -c "import mcp; print('ok')" 2>&1
-    if ($check -ne "ok") {
-        Write-Host "[install] Warning: mcp import check failed. Retrying install..."
-        & "$INSTALL_DIR\venv\Scripts\python.exe" -m pip install "mcp>=1.3.0" uvicorn anyio starlette graperoot
-        $check = & "$INSTALL_DIR\venv\Scripts\python.exe" -c "import mcp; print('ok')" 2>&1
-        if ($check -ne "ok") {
-            throw "Failed to install 'mcp' Python package."
+    $checkOut = & "$INSTALL_DIR\venv\Scripts\python.exe" -c "import mcp; print('ok')" 2>$null
+    if ($checkOut -ne "ok") {
+        Write-Host "[install] Warning: mcp import check failed. Retrying with --force-reinstall..."
+        & "$INSTALL_DIR\venv\Scripts\python.exe" -m pip install --force-reinstall "mcp>=1.3.0" uvicorn anyio starlette --quiet
+        $checkOut = & "$INSTALL_DIR\venv\Scripts\python.exe" -c "import mcp; print('ok')" 2>$null
+        if ($checkOut -ne "ok") {
+            # Capture the actual error for telemetry
+            $errDetail = & "$INSTALL_DIR\venv\Scripts\python.exe" -c "import mcp" 2>&1 | Out-String
+            throw "Failed to install 'mcp' Python package. Detail: $errDetail"
         }
     }
 
